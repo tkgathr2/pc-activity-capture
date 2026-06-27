@@ -1,0 +1,7 @@
+state/
+captures/
+captures-test/
+pc-capture-data/
+*.mp4
+*.jsonl
+verify-out.log

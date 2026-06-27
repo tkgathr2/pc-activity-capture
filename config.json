@@ -1,0 +1,11 @@
+{
+  "captureRoot": "%USERPROFILE%\\pc-capture-data",
+  "staleSeconds": 300,
+  "minFreeGB": 10,
+  "notify": {
+    "method": "log",
+    "johcho": "(unset: set upline/notify target here)",
+    "slackWebhook": "",
+    "slackChannel": ""
+  }
+}
