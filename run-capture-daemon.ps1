@@ -18,6 +18,11 @@ $cfg       = Get-Content (Join-Path $root 'config.json') -Raw | ConvertFrom-Json
 $outRoot   = [Environment]::ExpandEnvironmentVariables($cfg.captureRoot)
 $minFreeGB = if ($cfg.minFreeGB) { [double]$cfg.minFreeGB } else { 10 }
 
+# Guard: if captureRoot has unresolved env var placeholder, fail fast
+if ($outRoot -match '%\w+%') {
+  Write-Error "config.json captureRoot has unresolved env var: $outRoot"; exit 1
+}
+
 # Resolve ffmpeg/ffprobe to an ABSOLUTE path. A -NoProfile / HKCU Run / scheduled
 # task process does NOT inherit machine PATH (chocolatey\bin, WinGet Links), so a
 # bare 'ffmpeg' name fails silently on logon-start. Search the real install dirs.
@@ -47,15 +52,22 @@ function Resolve-Tool([string]$name, $cfgVal) {
 $ff = Resolve-Tool 'ffmpeg'  $cfg.ffmpegPath
 $fp = Resolve-Tool 'ffprobe' $cfg.ffprobePath
 
-$MicDevice = 'audio=@device_cm_{33D9A762-90C8-11D0-BD43-00A0C911CE86}\wave_{3B4BEB3B-66AA-4FB2-BD31-F6ABCFD8AF2B}'
+# MicDevice: resolved from config.micDevice (set per-PC) or falls back to this PC's hardware ID.
+# On a new PC, run: & ffmpeg -list_devices true -f dshow -i dummy 2>&1 | Select-String audio
+# then set config.micDevice to the device name shown (without the 'audio=' prefix).
+$MicDeviceName = if ($cfg.micDevice) { $cfg.micDevice } else {
+  '@device_cm_{33D9A762-90C8-11D0-BD43-00A0C911CE86}\wave_{3B4BEB3B-66AA-4FB2-BD31-F6ABCFD8AF2B}'
+}
+$MicDevice = "audio=$MicDeviceName"
 
 function Write-Heartbeat([string]$status, $pid2, [string]$detail) {
-  $hb = [ordered]@{ ts=(Get-Date).ToString('o'); status=$status; pid=$pid2; detail=$detail; host=$env:COMPUTERNAME; user=$env:USERNAME; ffmpeg=$ff; segmentSec=$SegmentSec }
+  # Omit ffmpeg path and OS username: exposed unauthenticated via dashboard /api/status
+  $hb = [ordered]@{ ts=(Get-Date).ToString('o'); status=$status; pid=$pid2; detail=$detail; host=$env:COMPUTERNAME; segmentSec=$SegmentSec }
   $hb | ConvertTo-Json -Compress | Set-Content -Encoding UTF8 $hbFile
 }
 
 # D6 disk resilience: keep free space above the threshold by deleting the oldest
-# mp4/keylog files. Safe to run while ffmpeg writes new ones.
+# tool-owned files. Name pattern check prevents accidental deletion of other files.
 function Get-FreeGB([string]$p) {
   try {
     $r = [System.IO.Path]::GetPathRoot($p)
@@ -64,15 +76,29 @@ function Get-FreeGB([string]$p) {
   } catch { return 9999 }
 }
 function Ensure-DiskSpace([string]$rootDir, [double]$minGB) {
-  $guard = 0
-  while ((Get-FreeGB $rootDir) -lt $minGB -and $guard -lt 100000) {
-    $oldest = Get-ChildItem $rootDir -Recurse -File -Include *.mp4,*.jsonl -ErrorAction SilentlyContinue |
+  $guard = 0; $lastRemoved = $null
+  # Pattern guards: only delete files this tool created (named by strftime or keylog_HHmmss)
+  $ownedPattern = '^(\d{4}-\d{2}-\d{2}_\d{6}\.mp4|keylog_\d{6}\.jsonl)$'
+  while ((Get-FreeGB $rootDir) -lt $minGB -and $guard -lt 1000) {
+    $oldest = Get-ChildItem $rootDir -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -match $ownedPattern } |
               Sort-Object LastWriteTime | Select-Object -First 1
     if (-not $oldest) { break }
+    if ($oldest.FullName -eq $lastRemoved) { break }  # delete failed last time, stop
+    $lastRemoved = $oldest.FullName
     Remove-Item $oldest.FullName -Force -ErrorAction SilentlyContinue
     $guard++
   }
   return (Get-FreeGB $rootDir)
+}
+
+function Start-KeyLog([string]$outDir) {
+  $klog      = Join-Path $outDir ("keylog_{0}.jsonl" -f (Get-Date).ToString('HHmmss'))
+  $klogPath  = Join-Path $root 'keylog.ps1'
+  $keyProc = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList @(
+    '-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$klogPath`"",
+    '-DurationSec','86400','-OutFile',"`"$klog`"")
+  return @{ proc=$keyProc; path=$klog }
 }
 
 function Start-Capture {
@@ -82,16 +108,12 @@ function Start-Capture {
   New-Item -ItemType Directory -Force $dayDir | Out-Null
 
   # one continuous keylog for this capture run (timestamps aligned to wall clock)
-  $klog = Join-Path $dayDir ("keylog_{0}.jsonl" -f $start.ToString('HHmmss'))
-  $keyProc = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList @(
-    '-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $root 'keylog.ps1'),
-    '-DurationSec','86400','-OutFile',$klog)
+  $kl = Start-KeyLog $dayDir
 
-  # session meta: t0 anchor for syncing keylog to video. Each segment file name is
-  # strftime(local wall clock) at its start, so a segment's t0_video == its filename.
+  # session meta: t0 anchor for syncing keylog to video. Omit mic/ffmpeg paths (security).
   ([ordered]@{ session_start=$start.ToString('o'); day=$day; t0=$start.ToString('o');
-               keylog=$klog; fps=$Fps; segmentSec=$SegmentSec; mic=$MicDevice;
-               ffmpeg=$ff; segment_name='%Y-%m-%d_%H%M%S.mp4'; mode='segment-muxer-gapless' } |
+               keylog=$kl.path; fps=$Fps; segmentSec=$SegmentSec;
+               segment_name='%Y-%m-%d_%H%M%S.mp4'; mode='segment-muxer-gapless' } |
     ConvertTo-Json) | Set-Content -Encoding UTF8 (Join-Path $dayDir 'session-meta.json')
 
   # GAPLESS recording: single ffmpeg, segment muxer. -force_key_frames puts a
@@ -107,15 +129,26 @@ function Start-Capture {
               '-f','segment','-segment_time',$SegmentSec,'-reset_timestamps','1','-strftime','1',
               $outPat)
   return @{ proc = (Start-Process $ff -ArgumentList $ffArgs -PassThru -WindowStyle Hidden);
-            key = $keyProc; dayDir = $dayDir }
+            key = $kl.proc; keyPath = $kl.path; dayDir = $dayDir; day = $day }
+}
+
+# Startup check: fail fast if ffmpeg binary not found (prevents tight crash-restart loop)
+if (-not (Test-Path $ff)) {
+  Write-Heartbeat 'error' $PID "ffmpeg not found. Install ffmpeg and set config.ffmpegPath, or ensure WinGet/choco install is complete. Searched: $ff"
+  Write-Error "ffmpeg not found at: $ff"
+  exit 1
 }
 
 Write-Heartbeat 'starting' $PID ''
 while ($true) {
   try {
+    $cap = $null; $proc = $null   # reset before Start-Capture so stale refs never survive a crash
     New-Item -ItemType Directory -Force $outRoot | Out-Null
     $freeGB = Ensure-DiskSpace $outRoot $minFreeGB
-    if ($freeGB -lt $minFreeGB) { Write-Heartbeat 'lowdisk' $PID "free=${freeGB}GB" }
+    if ($freeGB -lt $minFreeGB) {
+      Write-Heartbeat 'lowdisk' $PID "free=${freeGB}GB; waiting for disk"
+      Start-Sleep -Seconds 60; continue
+    }
 
     $cap = Start-Capture
     $proc = $cap.proc
@@ -123,16 +156,34 @@ while ($true) {
     while (-not $proc.HasExited) {
       $free = Get-FreeGB $outRoot
       if ($free -lt $minFreeGB) { Ensure-DiskSpace $outRoot $minFreeGB | Out-Null }
+
+      # keylog watchdog: restart keylog if it died unexpectedly
+      if ($cap.key -and $cap.key.HasExited) {
+        $kl2 = Start-KeyLog $cap.dayDir
+        $cap.key = $kl2.proc
+      }
+
+      # Midnight rollover: if calendar day changed, restart ffmpeg in new dayDir
+      $todayStr = (Get-Date).ToString('yyyy-MM-dd')
+      if ($todayStr -ne $cap.day) {
+        Write-Heartbeat 'recording' $proc.Id "midnight-rollover; stopping ffmpeg for day boundary"
+        try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+        try { if ($cap.key -and -not $cap.key.HasExited) { Stop-Process -Id $cap.key.Id -Force -ErrorAction SilentlyContinue } } catch {}
+        break  # exit inner loop; outer loop calls Start-Capture with new day
+      }
+
       $newest = Get-ChildItem $cap.dayDir -Filter *.mp4 -ErrorAction SilentlyContinue |
                 Sort-Object LastWriteTime | Select-Object -Last 1
       Write-Heartbeat 'recording' $proc.Id ("free=${free}GB last=" + $(if ($newest) { $newest.Name } else { '-' }))
       Start-Sleep -Seconds 30
     }
 
-    # ffmpeg exited unexpectedly (only gap source). Clean child keylog and restart.
-    try { if ($cap.key -and -not $cap.key.HasExited) { Stop-Process -Id $cap.key.Id -Force -ErrorAction SilentlyContinue } } catch {}
-    Write-Heartbeat 'error' $PID 'ffmpeg exited; restarting'
-    Start-Sleep -Seconds 5
+    # ffmpeg exited (rollover break or unexpected exit). Clean child keylog and restart.
+    try { if ($cap -and $cap.key -and -not $cap.key.HasExited) { Stop-Process -Id $cap.key.Id -Force -ErrorAction SilentlyContinue } } catch {}
+    if ($proc -and $proc.HasExited -and $proc.ExitCode -ne 0) {
+      Write-Heartbeat 'error' $PID "ffmpeg exited (code=$($proc.ExitCode)); restarting"
+      Start-Sleep -Seconds 5
+    }
   } catch {
     Write-Heartbeat 'error' $PID $_.Exception.Message
     Start-Sleep -Seconds 15

@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Revolution - PC Activity Capture Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    min-height: 100vh;
+    padding: 24px;
+  }
+  h1 { font-size: 1.4rem; font-weight: 600; color: #94a3b8; letter-spacing: 0.05em; margin-bottom: 20px; }
+  h1 span { color: #e2e8f0; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-bottom: 20px; }
+  .card {
+    background: #1e2330;
+    border: 1px solid #2d3748;
+    border-radius: 10px;
+    padding: 20px;
+  }
+  .card-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; margin-bottom: 8px; }
+  .card-value { font-size: 1.5rem; font-weight: 700; color: #e2e8f0; line-height: 1.2; }
+  .card-sub { font-size: 0.78rem; color: #64748b; margin-top: 6px; word-break: break-all; }
+
+  /* Status badge */
+  .badge {
+    display: inline-block;
+    padding: 4px 14px;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .badge-recording { background: #14532d; color: #4ade80; border: 1px solid #166534; }
+  .badge-error     { background: #450a0a; color: #f87171; border: 1px solid #7f1d1d; }
+  .badge-lowdisk   { background: #431407; color: #fb923c; border: 1px solid #7c2d12; }
+  .badge-starting  { background: #1e3a5f; color: #60a5fa; border: 1px solid #1d4ed8; }
+  .badge-unknown   { background: #1e1e2e; color: #94a3b8; border: 1px solid #334155; }
+
+  /* Alerts */
+  .alerts-card { background: #1e2330; border: 1px solid #2d3748; border-radius: 10px; padding: 20px; }
+  .alerts-title { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; margin-bottom: 12px; }
+  .alert-list { max-height: 260px; overflow-y: auto; }
+  .alert-line {
+    font-size: 0.75rem;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    padding: 5px 8px;
+    border-radius: 4px;
+    margin-bottom: 4px;
+    line-height: 1.5;
+  }
+  .alert-line.alert  { background: #2d1515; color: #f87171; }
+  .alert-line.recover { background: #142b1a; color: #4ade80; }
+  .alert-line.other  { background: #1a1f2e; color: #94a3b8; }
+  .empty-msg { color: #475569; font-size: 0.82rem; padding: 8px 0; }
+
+  /* Refresh indicator */
+  .footer { display: flex; align-items: center; gap: 10px; margin-top: 16px; color: #475569; font-size: 0.75rem; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .dot.off { background: #ef4444; animation: none; }
+
+  /* Disk bar */
+  .disk-bar-wrap { background: #0f172a; border-radius: 4px; height: 6px; margin-top: 10px; overflow: hidden; }
+  .disk-bar { height: 100%; border-radius: 4px; transition: width 0.4s; }
+  .disk-bar.ok   { background: #22c55e; }
+  .disk-bar.warn { background: #f59e0b; }
+  .disk-bar.crit { background: #ef4444; }
+</style>
+</head>
+<body>
+<h1>Revolution / <span>PC Activity Capture</span></h1>
+
+<div class="grid">
+  <div class="card">
+    <div class="card-label">Status</div>
+    <div id="status-badge"><span class="badge badge-unknown">Loading…</span></div>
+    <div class="card-sub" id="status-reason"></div>
+  </div>
+  <div class="card">
+    <div class="card-label">Last Heartbeat</div>
+    <div class="card-value" id="hb-age">—</div>
+    <div class="card-sub" id="hb-ts"></div>
+  </div>
+  <div class="card">
+    <div class="card-label">Free Disk</div>
+    <div class="card-value" id="disk-free">—</div>
+    <div class="disk-bar-wrap"><div class="disk-bar ok" id="disk-bar" style="width:0%"></div></div>
+    <div class="card-sub" id="disk-sub"></div>
+  </div>
+  <div class="card">
+    <div class="card-label">Latest Segment</div>
+    <div class="card-value" id="latest-seg" style="font-size:1rem">—</div>
+    <div class="card-sub" id="seg-sub"></div>
+  </div>
+  <div class="card">
+    <div class="card-label">ffmpeg PID</div>
+    <div class="card-value" id="ffmpeg-pid">—</div>
+    <div class="card-sub" id="ffmpeg-sub"></div>
+  </div>
+  <div class="card">
+    <div class="card-label">Watchdog</div>
+    <div class="card-value" id="wd-state">—</div>
+    <div class="card-sub" id="wd-checked"></div>
+  </div>
+</div>
+
+<div class="alerts-card">
+  <div class="alerts-title">Alert Log (latest 20 lines)</div>
+  <div class="alert-list" id="alert-list"><div class="empty-msg">No alerts yet</div></div>
+</div>
+
+<div class="footer">
+  <div class="dot" id="pulse-dot"></div>
+  <span id="footer-msg">Connecting…</span>
+</div>
+
+<script>
+const API = '/api/status';
+let refreshTimer;
+
+function ageSec(isoTs) {
+  return Math.round((Date.now() - new Date(isoTs).getTime()) / 1000);
+}
+function fmtAge(sec) {
+  if (sec < 60)  return sec + 's ago';
+  if (sec < 3600) return Math.floor(sec/60) + 'm ' + (sec%60) + 's ago';
+  return Math.floor(sec/3600) + 'h ' + Math.floor((sec%3600)/60) + 'm ago';
+}
+
+function badgeHtml(status) {
+  const map = {
+    recording: ['badge-recording','RECORDING'],
+    error:     ['badge-error','ERROR'],
+    lowdisk:   ['badge-lowdisk','LOW DISK'],
+    starting:  ['badge-starting','STARTING'],
+  };
+  const [cls, label] = map[status] || ['badge-unknown', status ? status.toUpperCase() : 'UNKNOWN'];
+  return `<span class="badge ${cls}">${label}</span>`;
+}
+
+async function refresh() {
+  try {
+    const res = await fetch(API);
+    if (!res.ok) throw new Error(res.statusText);
+    const d = await res.json();
+    const hb = d.heartbeat || {};
+    const wd = d.watchdog  || {};
+
+    // Status
+    document.getElementById('status-badge').innerHTML = badgeHtml(hb.status);
+    document.getElementById('status-reason').textContent = hb.detail || '';
+
+    // Heartbeat age
+    if (hb.ts) {
+      const age = ageSec(hb.ts);
+      document.getElementById('hb-age').textContent = fmtAge(age);
+      document.getElementById('hb-ts').textContent  = new Date(hb.ts).toLocaleTimeString('ja-JP');
+    }
+
+    // Disk
+    const detailStr = hb.detail || '';
+    const freeMatch = detailStr.match(/free=([\d.]+)GB/);
+    if (freeMatch) {
+      const freeGB = parseFloat(freeMatch[1]);
+      document.getElementById('disk-free').textContent = freeGB.toFixed(1) + ' GB';
+      // Bar is threshold-relative (not total-disk-relative) to work on any drive size:
+      // green=2x threshold, warn=1-2x threshold, crit=below threshold
+      const minGB = hb.segmentSec ? Math.max(10, hb.segmentSec / 1800 * 10) : 10;
+      const pct = Math.min(100, Math.round(freeGB / (minGB * 4) * 100));
+      const bar = document.getElementById('disk-bar');
+      bar.style.width = pct + '%';
+      bar.className = 'disk-bar ' + (freeGB > minGB * 2 ? 'ok' : freeGB > minGB ? 'warn' : 'crit');
+      document.getElementById('disk-sub').textContent = 'Threshold: ' + (hb.segmentSec ? hb.segmentSec/60 + 'min segments' : '');
+    }
+
+    // Latest segment
+    const segMatch = detailStr.match(/last=([^\s]+)/);
+    if (segMatch && segMatch[1] !== '-') {
+      document.getElementById('latest-seg').textContent = segMatch[1];
+      document.getElementById('seg-sub').textContent = 'Segment size: ' + (hb.segmentSec || '?') + 's';
+    }
+
+    // ffmpeg PID
+    document.getElementById('ffmpeg-pid').textContent = hb.pid || '—';
+    document.getElementById('ffmpeg-sub').textContent = hb.host ? hb.host + ' / ' + hb.user : '';
+
+    // Watchdog
+    const wdState = wd.state || '—';
+    document.getElementById('wd-state').textContent = wdState;
+    document.getElementById('wd-state').style.color = wdState === 'UP' ? '#4ade80' : wdState === 'DOWN' ? '#f87171' : '#94a3b8';
+    document.getElementById('wd-checked').textContent = wd.checked ? 'Checked: ' + new Date(wd.checked).toLocaleTimeString('ja-JP') : '';
+
+    // Alerts
+    const alerts = d.alerts || [];
+    const listEl = document.getElementById('alert-list');
+    if (alerts.length === 0) {
+      listEl.innerHTML = '<div class="empty-msg">No alerts</div>';
+    } else {
+      listEl.innerHTML = alerts.slice(-20).reverse().map(line => {
+        const cls = line.includes('[ALERT]') ? 'alert' : line.includes('[RECOVERED]') ? 'recover' : 'other';
+        return `<div class="alert-line ${cls}">${escHtml(line)}</div>`;
+      }).join('');
+    }
+
+    document.getElementById('pulse-dot').className = 'dot';
+    document.getElementById('footer-msg').textContent = 'Auto-refresh every 5s — Last: ' + new Date().toLocaleTimeString('ja-JP');
+  } catch(e) {
+    document.getElementById('pulse-dot').className = 'dot off';
+    document.getElementById('footer-msg').textContent = 'Connection error: ' + e.message;
+  }
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

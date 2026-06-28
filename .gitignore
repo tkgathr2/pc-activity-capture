@@ -5,3 +5,5 @@ pc-capture-data/
 *.mp4
 *.jsonl
 verify-out.log
+# config.json may contain slackWebhook secret — use config.template.json as safe baseline
+config.local.json

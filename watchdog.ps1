@@ -11,7 +11,8 @@ $hbFile   = Join-Path $stateDir 'heartbeat.json'
 $wsFile   = Join-Path $stateDir 'watchdog-state.json'
 $alogFile = Join-Path $stateDir 'alerts.log'
 $cfg      = Get-Content (Join-Path $root 'config.json') -Raw | ConvertFrom-Json
-$staleSec = [int]$cfg.staleSeconds
+# Guard against missing/zero staleSeconds (would make every heartbeat look stale)
+$staleSec = if ($cfg.staleSeconds -and [int]$cfg.staleSeconds -gt 0) { [int]$cfg.staleSeconds } else { 300 }
 
 # --- determine current health ---
 $down = $true; $reason = 'heartbeat missing (capture never started?)'
@@ -20,7 +21,11 @@ if (Test-Path $hbFile) {
     $hb = Get-Content $hbFile -Raw | ConvertFrom-Json
     $age = ((Get-Date) - [datetime]$hb.ts).TotalSeconds
     if ($age -le $staleSec -and $hb.status -ne 'error') { $down = $false }
-    else { $reason = "heartbeat stale $([int]$age)s (status=$($hb.status))" }
+    elseif ($hb.status -eq 'error') {
+      $reason = "capture reported error (age=$([int]$age)s): $($hb.detail)"
+    } else {
+      $reason = "heartbeat stale $([int]$age)s (status=$($hb.status))"
+    }
   } catch { $reason = 'heartbeat unreadable' }
 }
 $state = if ($down) { 'DOWN' } else { 'UP' }
@@ -37,12 +42,13 @@ function Send-Alert([string]$msg) {
     try {
       $body = @{ text = $msg } | ConvertTo-Json
       Invoke-RestMethod -Method Post -Uri $cfg.notify.slackWebhook -ContentType 'application/json' -Body $body | Out-Null
-    } catch { Add-Content -Encoding UTF8 $alogFile "$((Get-Date).ToString('o'))  [send-fail] $($_.Exception.Message)" }
+    } catch { Add-Content -Encoding UTF8 $alogFile "$((Get-Date).ToString('o'))  [send-fail] $($_.Exception.GetType().Name): slack webhook request failed" }
   }
 }
 
-# --- alert only on transition ---
-if ($state -ne $prev -and $prev -ne 'UNKNOWN') {
+# --- alert on transition OR on first-ever run if already DOWN ---
+$shouldAlert = ($state -ne $prev -and $prev -ne 'UNKNOWN') -or ($state -eq 'DOWN' -and $prev -eq 'UNKNOWN')
+if ($shouldAlert) {
   if ($state -eq 'DOWN') {
     Send-Alert ("[ALERT] PC activity capture is NOT running on {0}/{1}. {2}  -> notify 上長: {3}" -f `
       $env:COMPUTERNAME, $env:USERNAME, $reason, $cfg.notify.johcho)

@@ -1,11 +1,12 @@
 # keylog.ps1 - keystroke logger (GetAsyncKeyState polling) -> JSONL with absolute timestamps
 # PoC layer 3 of the capture system. ASCII-only on purpose (avoids CP932/BOM mojibake).
 # Each line: {"ts":"ISO8601","vk":int,"key":"Name","window":"active window title"}
+# Note: scans VK 8-254 (excludes mouse buttons 1-4,6,7 intentionally -- capture video only)
 param(
-  [int]$DurationSec = 8,
+  [int]$DurationSec = 8,          # default=8s for quick test; daemon passes 86400
   [string]$OutFile  = "keylog.jsonl"
 )
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Continue'  # do not crash on non-fatal errors
 Add-Type -AssemblyName System.Windows.Forms
 $sig = @"
 using System;
@@ -22,26 +23,29 @@ public class KbNative {
   }
 }
 "@
-Add-Type -TypeDefinition $sig
+Add-Type -TypeDefinition $sig -ErrorAction SilentlyContinue
 $sw = [System.IO.StreamWriter]::new($OutFile, $true, [System.Text.UTF8Encoding]::new($false))
-$end = (Get-Date).AddSeconds($DurationSec)
-$prev = @{}
-while ((Get-Date) -lt $end) {
-  for ($v = 8; $v -le 254; $v++) {
-    $state = [KbNative]::GetAsyncKeyState($v)
-    $down  = ($state -band 0x8000) -ne 0
-    if ($down -and -not $prev[$v]) {
-      $ev = [ordered]@{
-        ts     = (Get-Date).ToString("o")
-        vk     = $v
-        key    = ([System.Windows.Forms.Keys]$v).ToString()
-        window = [KbNative]::ActiveWindow()
+try {
+  $end = (Get-Date).AddSeconds($DurationSec)
+  $prev = @{}
+  while ((Get-Date) -lt $end) {
+    for ($v = 8; $v -le 254; $v++) {
+      $state = [KbNative]::GetAsyncKeyState($v)
+      $down  = ($state -band 0x8000) -ne 0
+      if ($down -and -not $prev[$v]) {
+        $ev = [ordered]@{
+          ts     = (Get-Date).ToString("o")
+          vk     = $v
+          key    = ([System.Windows.Forms.Keys]$v).ToString()
+          window = [KbNative]::ActiveWindow()
+        }
+        $sw.WriteLine(($ev | ConvertTo-Json -Compress))
+        $sw.Flush()
       }
-      $sw.WriteLine(($ev | ConvertTo-Json -Compress))
-      $sw.Flush()
+      $prev[$v] = $down
     }
-    $prev[$v] = $down
+    Start-Sleep -Milliseconds 12
   }
-  Start-Sleep -Milliseconds 12
+} finally {
+  $sw.Close()
 }
-$sw.Close()
