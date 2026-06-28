@@ -1,227 +1,436 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Revolution - PC Activity Capture Dashboard</title>
+<title>Revolution Dashboard</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: 'Segoe UI', system-ui, sans-serif;
-    background: #0f1117;
-    color: #e2e8f0;
-    min-height: 100vh;
-    padding: 24px;
-  }
-  h1 { font-size: 1.4rem; font-weight: 600; color: #94a3b8; letter-spacing: 0.05em; margin-bottom: 20px; }
-  h1 span { color: #e2e8f0; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-bottom: 20px; }
-  .card {
-    background: #1e2330;
-    border: 1px solid #2d3748;
-    border-radius: 10px;
-    padding: 20px;
-  }
-  .card-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; margin-bottom: 8px; }
-  .card-value { font-size: 1.5rem; font-weight: 700; color: #e2e8f0; line-height: 1.2; }
-  .card-sub { font-size: 0.78rem; color: #64748b; margin-top: 6px; word-break: break-all; }
+/* ─── Reset ─── */
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#070711;--surface:#0f0f1a;--card:#14141f;--border:rgba(255,255,255,0.07);
+  --accent:#7c3aed;--accent2:#6d28d9;--cyan:#00d4ff;
+  --txt1:#e2e8f0;--txt2:#94a3b8;--txt3:#4b5563;
+  --green:#22c55e;--amber:#f59e0b;--red:#ef4444;
+}
 
-  /* Status badge */
-  .badge {
-    display: inline-block;
-    padding: 4px 14px;
-    border-radius: 999px;
-    font-size: 0.85rem;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
-  .badge-recording { background: #14532d; color: #4ade80; border: 1px solid #166534; }
-  .badge-error     { background: #450a0a; color: #f87171; border: 1px solid #7f1d1d; }
-  .badge-lowdisk   { background: #431407; color: #fb923c; border: 1px solid #7c2d12; }
-  .badge-starting  { background: #1e3a5f; color: #60a5fa; border: 1px solid #1d4ed8; }
-  .badge-unknown   { background: #1e1e2e; color: #94a3b8; border: 1px solid #334155; }
+html,body{height:100%;overflow:hidden}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',monospace;background:var(--bg);color:var(--txt1);display:flex;flex-direction:column}
 
-  /* Alerts */
-  .alerts-card { background: #1e2330; border: 1px solid #2d3748; border-radius: 10px; padding: 20px; }
-  .alerts-title { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; margin-bottom: 12px; }
-  .alert-list { max-height: 260px; overflow-y: auto; }
-  .alert-line {
-    font-size: 0.75rem;
-    font-family: 'Cascadia Code', 'Consolas', monospace;
-    padding: 5px 8px;
-    border-radius: 4px;
-    margin-bottom: 4px;
-    line-height: 1.5;
-  }
-  .alert-line.alert  { background: #2d1515; color: #f87171; }
-  .alert-line.recover { background: #142b1a; color: #4ade80; }
-  .alert-line.other  { background: #1a1f2e; color: #94a3b8; }
-  .empty-msg { color: #475569; font-size: 0.82rem; padding: 8px 0; }
+/* ─── Header ─── */
+#header{
+  display:flex;align-items:center;gap:12px;
+  padding:0 18px;height:46px;flex-shrink:0;
+  background:var(--surface);border-bottom:1px solid var(--border);
+}
+#header h1{font-size:15px;font-weight:700;color:var(--txt1);letter-spacing:.5px}
+#header h1 span{color:var(--accent)}
+#hb-dot{width:8px;height:8px;border-radius:50%;background:var(--txt3);flex-shrink:0;transition:background .3s}
+#hb-dot.ok{background:var(--green);box-shadow:0 0 8px rgba(34,197,94,.6);animation:pulse-dot 2s infinite}
+#hb-dot.warn{background:var(--amber)}
+#hb-dot.err{background:var(--red)}
+@keyframes pulse-dot{0%,100%{box-shadow:0 0 4px rgba(34,197,94,.4)}50%{box-shadow:0 0 10px rgba(34,197,94,.9)}}
+#rec-badge{
+  font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;
+  padding:3px 10px;border-radius:20px;background:var(--txt3);color:var(--bg);transition:all .3s;
+}
+#rec-badge.recording{background:var(--green);color:#000;animation:pulse-rec 1.5s infinite}
+#rec-badge.lowdisk{background:var(--amber);color:#000}
+#rec-badge.error{background:var(--red);color:#fff}
+@keyframes pulse-rec{0%,100%{opacity:1}50%{opacity:.7}}
+#wd-badge{font-size:11px;color:var(--txt2);padding:2px 8px;border-radius:12px;border:1px solid var(--border);background:var(--card)}
+#hb-text{font-size:11px;color:var(--txt3);margin-left:auto}
 
-  /* Refresh indicator */
-  .footer { display: flex; align-items: center; gap: 10px; margin-top: 16px; color: #475569; font-size: 0.75rem; }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; animation: pulse 2s infinite; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
-  .dot.off { background: #ef4444; animation: none; }
+/* ─── 3-pane ─── */
+#main{display:flex;flex:1;overflow:hidden}
 
-  /* Disk bar */
-  .disk-bar-wrap { background: #0f172a; border-radius: 4px; height: 6px; margin-top: 10px; overflow: hidden; }
-  .disk-bar { height: 100%; border-radius: 4px; transition: width 0.4s; }
-  .disk-bar.ok   { background: #22c55e; }
-  .disk-bar.warn { background: #f59e0b; }
-  .disk-bar.crit { background: #ef4444; }
+/* ─── Sidebar ─── */
+#left{width:200px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+#left-title{font-size:9px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--txt3);padding:12px 14px 8px;border-bottom:1px solid var(--border);flex-shrink:0}
+#date-list{flex:1;overflow-y:auto;padding:6px}
+#date-list::-webkit-scrollbar{width:3px}
+#date-list::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.date-item{padding:8px 10px;font-size:12px;cursor:pointer;border-radius:6px;color:var(--txt2);margin-bottom:2px;transition:all .15s;border:1px solid transparent}
+.date-item:hover{background:var(--card);color:var(--txt1);border-color:var(--border)}
+.date-item.active{background:rgba(124,58,237,.15);color:var(--accent);border-color:rgba(124,58,237,.35);font-weight:600}
+
+/* ─── Center ─── */
+#center{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+#video-wrap{flex-shrink:0;background:#000;display:flex;align-items:center;justify-content:center;border-bottom:1px solid var(--border)}
+#vid{max-width:100%;max-height:100%;display:block}
+#video-placeholder{color:var(--txt3);font-size:13px;text-align:center;padding:40px 20px}
+#video-placeholder::before{content:'▶';display:block;font-size:36px;margin-bottom:10px;opacity:.3}
+#seg-area{flex:1;overflow-y:auto;background:var(--bg)}
+#seg-area::-webkit-scrollbar{width:3px}
+#seg-area::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+#seg-title{font-size:9px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--txt3);padding:10px 14px 6px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:5}
+#seg-list{padding:8px}
+.seg-item{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;cursor:pointer;border:1px solid transparent;margin-bottom:4px;transition:all .15s}
+.seg-item:hover{background:var(--card);border-color:var(--border)}
+.seg-item.active{background:rgba(124,58,237,.12);border-color:rgba(124,58,237,.4)}
+.seg-icon{font-size:16px;flex-shrink:0;opacity:.7}
+.seg-time{font-size:13px;font-weight:600;color:var(--txt1);font-variant-numeric:tabular-nums}
+.seg-name{font-size:10px;color:var(--txt3);flex:1}
+.seg-size{font-size:10px;color:var(--txt3);background:var(--surface);padding:2px 6px;border-radius:10px;border:1px solid var(--border);flex-shrink:0}
+
+/* ─── Right keylog ─── */
+#right{width:300px;flex-shrink:0;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+#klog-header{display:flex;align-items:center;gap:6px;padding:8px 12px;border-bottom:1px solid var(--border);flex-shrink:0}
+#klog-title{font-size:9px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--txt3)}
+#klog-file-sel{flex:1;min-width:0;font-size:10px;background:var(--card);border:1px solid var(--border);color:var(--txt1);padding:3px 6px;border-radius:5px;cursor:pointer;outline:none}
+#klog-file-sel:focus{border-color:var(--accent)}
+#klog-sync-toggle{font-size:10px;font-weight:600;background:var(--card);border:1px solid var(--border);color:var(--txt2);padding:3px 8px;border-radius:5px;cursor:pointer;flex-shrink:0;transition:all .15s}
+#klog-sync-toggle.on{background:rgba(124,58,237,.2);color:var(--accent);border-color:rgba(124,58,237,.4)}
+
+/* klog-body is the scroll container; head-row is its first child (sticky) */
+#klog-body{flex:1;overflow-y:auto;font-size:11px;position:relative}
+#klog-body::-webkit-scrollbar{width:3px}
+#klog-body::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+#klog-head-row{
+  display:grid;grid-template-columns:60px 90px 1fr;
+  gap:4px;padding:5px 10px;
+  background:var(--card);border-bottom:1px solid var(--border);
+  position:sticky;top:0;z-index:5;
+}
+#klog-head-row span{font-size:9px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--txt3)}
+.klog-row{display:grid;grid-template-columns:60px 90px 1fr;gap:4px;padding:4px 10px;border-bottom:1px solid rgba(255,255,255,.03);align-items:center;transition:background .1s}
+.klog-row:hover{background:var(--card)}
+.klog-row.highlight{background:rgba(124,58,237,.1);border-left:2px solid var(--accent);padding-left:8px}
+.klog-ts{color:var(--txt3);font-size:10px;font-variant-numeric:tabular-nums}
+.klog-key{display:inline-block;font-size:10px;font-weight:600;background:var(--card);border:1px solid var(--border);color:var(--amber);padding:1px 5px;border-radius:4px;border-bottom-width:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:80px}
+.klog-win{color:var(--txt3);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.klog-empty{color:var(--txt3);font-size:12px;padding:24px;text-align:center}
+
+/* ─── External player overlay ─── */
+#ext-bar{display:none;position:absolute;inset:0;z-index:10;
+  align-items:center;justify-content:center;flex-direction:column;gap:10px;
+  background:rgba(7,7,17,.88);pointer-events:none}
+#ext-bar.show{display:flex;pointer-events:auto}
+#ext-bar p{color:var(--txt3);font-size:12px;text-align:center;line-height:1.6}
+#ext-play-btn{font-size:13px;font-weight:700;padding:10px 24px;border-radius:8px;
+  border:none;background:var(--accent);color:#fff;cursor:pointer;transition:background .15s}
+#ext-play-btn:hover{background:var(--accent2)}
+
+/* ─── Segment open button ─── */
+.seg-ext-btn{font-size:9px;font-weight:700;padding:2px 7px;border-radius:4px;
+  border:1px solid var(--border);background:var(--surface);color:var(--txt3);
+  cursor:pointer;flex-shrink:0;white-space:nowrap;transition:all .15s}
+.seg-ext-btn:hover{background:rgba(124,58,237,.2);color:var(--accent);border-color:rgba(124,58,237,.4)}
+
+/* ─── Error bar ─── */
+#err-bar{display:none;position:fixed;bottom:12px;right:12px;z-index:200;background:rgba(239,68,68,.12);border:1px solid var(--red);color:var(--red);font-size:11px;padding:6px 12px;border-radius:6px}
+.empty-hint{color:var(--txt3);font-size:12px;padding:16px;text-align:center}
 </style>
 </head>
 <body>
-<h1>Revolution / <span>PC Activity Capture</span></h1>
-
-<div class="grid">
-  <div class="card">
-    <div class="card-label">Status</div>
-    <div id="status-badge"><span class="badge badge-unknown">Loading…</span></div>
-    <div class="card-sub" id="status-reason"></div>
+<div id="header">
+  <h1>&#9889; <span>Revolution</span></h1>
+  <div id="hb-dot"></div>
+  <span id="rec-badge">NO DATA</span>
+  <span id="wd-badge">watchdog: —</span>
+  <span id="hb-text"></span>
+</div>
+<div id="main">
+  <div id="left">
+    <div id="left-title">Sessions</div>
+    <div id="date-list"><div class="empty-hint">Loading…</div></div>
   </div>
-  <div class="card">
-    <div class="card-label">Last Heartbeat</div>
-    <div class="card-value" id="hb-age">—</div>
-    <div class="card-sub" id="hb-ts"></div>
+  <div id="center">
+    <div id="video-wrap" style="height:56%;position:relative">
+      <div id="video-placeholder">Select a segment to play</div>
+      <video id="vid" controls style="display:none;width:100%;height:100%"></video>
+      <div id="ext-bar">
+        <p>Chrome の GPU デコーダーが応答しません。<br>外部プレイヤーで再生してください。</p>
+        <button id="ext-play-btn" onclick="openExtPlayer()">▶ 外部プレイヤーで開く</button>
+      </div>
+    </div>
+    <div id="seg-area">
+      <div id="seg-title">Segments</div>
+      <div id="seg-list"><div class="empty-hint">Select a date</div></div>
+    </div>
   </div>
-  <div class="card">
-    <div class="card-label">Free Disk</div>
-    <div class="card-value" id="disk-free">—</div>
-    <div class="disk-bar-wrap"><div class="disk-bar ok" id="disk-bar" style="width:0%"></div></div>
-    <div class="card-sub" id="disk-sub"></div>
-  </div>
-  <div class="card">
-    <div class="card-label">Latest Segment</div>
-    <div class="card-value" id="latest-seg" style="font-size:1rem">—</div>
-    <div class="card-sub" id="seg-sub"></div>
-  </div>
-  <div class="card">
-    <div class="card-label">ffmpeg PID</div>
-    <div class="card-value" id="ffmpeg-pid">—</div>
-    <div class="card-sub" id="ffmpeg-sub"></div>
-  </div>
-  <div class="card">
-    <div class="card-label">Watchdog</div>
-    <div class="card-value" id="wd-state">—</div>
-    <div class="card-sub" id="wd-checked"></div>
+  <div id="right">
+    <div id="klog-header">
+      <span id="klog-title">Keylog</span>
+      <select id="klog-file-sel"><option value="">— no files —</option></select>
+      <button id="klog-sync-toggle" class="on">Sync</button>
+    </div>
+    <!-- klog-body is the scroll container; klog-head-row is sticky inside it -->
+    <div id="klog-body">
+      <div id="klog-head-row">
+        <span>Time</span><span>Key</span><span>Window</span>
+      </div>
+      <div class="klog-empty">No keylog loaded</div>
+    </div>
   </div>
 </div>
-
-<div class="alerts-card">
-  <div class="alerts-title">Alert Log (latest 20 lines)</div>
-  <div class="alert-list" id="alert-list"><div class="empty-msg">No alerts yet</div></div>
-</div>
-
-<div class="footer">
-  <div class="dot" id="pulse-dot"></div>
-  <span id="footer-msg">Connecting…</span>
-</div>
+<div id="err-bar"></div>
 
 <script>
-const API = '/api/status';
-let refreshTimer;
+const API = '';
+let currentDate = null;
+let currentSegFile = null; // { date, filename, epochMs }
+let klogData = [];
+let klogSync = true;
+let syncTimer = null;
 
-function ageSec(isoTs) {
-  return Math.round((Date.now() - new Date(isoTs).getTime()) / 1000);
-}
-function fmtAge(sec) {
-  if (sec < 60)  return sec + 's ago';
-  if (sec < 3600) return Math.floor(sec/60) + 'm ' + (sec%60) + 's ago';
-  return Math.floor(sec/3600) + 'h ' + Math.floor((sec%3600)/60) + 'm ago';
-}
-
-function badgeHtml(status) {
-  const map = {
-    recording: ['badge-recording','RECORDING'],
-    error:     ['badge-error','ERROR'],
-    lowdisk:   ['badge-lowdisk','LOW DISK'],
-    starting:  ['badge-starting','STARTING'],
-  };
-  const [cls, label] = map[status] || ['badge-unknown', status ? status.toUpperCase() : 'UNKNOWN'];
-  return `<span class="badge ${cls}">${label}</span>`;
+function showErr(msg) {
+  const b = document.getElementById('err-bar');
+  b.textContent = msg; b.style.display = 'block';
+  clearTimeout(b._t); b._t = setTimeout(() => { b.style.display = 'none'; }, 5000);
 }
 
-async function refresh() {
+// ── Status header ──
+async function refreshStatus() {
   try {
-    const res = await fetch(API);
-    if (!res.ok) throw new Error(res.statusText);
-    const d = await res.json();
-    const hb = d.heartbeat || {};
-    const wd = d.watchdog  || {};
-
-    // Status
-    document.getElementById('status-badge').innerHTML = badgeHtml(hb.status);
-    document.getElementById('status-reason').textContent = hb.detail || '';
-
-    // Heartbeat age
+    const d = await fetch(API + '/api/status').then(r => r.json());
+    const hb = d.heartbeat || {}, wd = d.watchdog || {};
+    const dot = document.getElementById('hb-dot');
+    const badge = document.getElementById('rec-badge');
     if (hb.ts) {
-      const age = ageSec(hb.ts);
-      document.getElementById('hb-age').textContent = fmtAge(age);
-      document.getElementById('hb-ts').textContent  = new Date(hb.ts).toLocaleTimeString('ja-JP');
-    }
-
-    // Disk
-    const detailStr = hb.detail || '';
-    const freeMatch = detailStr.match(/free=([\d.]+)GB/);
-    if (freeMatch) {
-      const freeGB = parseFloat(freeMatch[1]);
-      document.getElementById('disk-free').textContent = freeGB.toFixed(1) + ' GB';
-      // Bar is threshold-relative (not total-disk-relative) to work on any drive size:
-      // green=2x threshold, warn=1-2x threshold, crit=below threshold
-      const minGB = hb.segmentSec ? Math.max(10, hb.segmentSec / 1800 * 10) : 10;
-      const pct = Math.min(100, Math.round(freeGB / (minGB * 4) * 100));
-      const bar = document.getElementById('disk-bar');
-      bar.style.width = pct + '%';
-      bar.className = 'disk-bar ' + (freeGB > minGB * 2 ? 'ok' : freeGB > minGB ? 'warn' : 'crit');
-      document.getElementById('disk-sub').textContent = 'Threshold: ' + (hb.segmentSec ? hb.segmentSec/60 + 'min segments' : '');
-    }
-
-    // Latest segment
-    const segMatch = detailStr.match(/last=([^\s]+)/);
-    if (segMatch && segMatch[1] !== '-') {
-      document.getElementById('latest-seg').textContent = segMatch[1];
-      document.getElementById('seg-sub').textContent = 'Segment size: ' + (hb.segmentSec || '?') + 's';
-    }
-
-    // ffmpeg PID
-    document.getElementById('ffmpeg-pid').textContent = hb.pid || '—';
-    document.getElementById('ffmpeg-sub').textContent = hb.host ? hb.host + ' / ' + hb.user : '';
-
-    // Watchdog
-    const wdState = wd.state || '—';
-    document.getElementById('wd-state').textContent = wdState;
-    document.getElementById('wd-state').style.color = wdState === 'UP' ? '#4ade80' : wdState === 'DOWN' ? '#f87171' : '#94a3b8';
-    document.getElementById('wd-checked').textContent = wd.checked ? 'Checked: ' + new Date(wd.checked).toLocaleTimeString('ja-JP') : '';
-
-    // Alerts
-    const alerts = d.alerts || [];
-    const listEl = document.getElementById('alert-list');
-    if (alerts.length === 0) {
-      listEl.innerHTML = '<div class="empty-msg">No alerts</div>';
+      const ageSec = Math.round((Date.now() - new Date(hb.ts).getTime()) / 1000);
+      dot.className = ageSec < 60 ? 'ok' : ageSec < 300 ? 'warn' : 'err';
+      document.getElementById('hb-text').textContent = ageSec + 's ago · pid ' + (hb.pid || '—');
+      const st = (hb.status || 'unknown').toLowerCase();
+      badge.textContent = st === 'recording' ? '● REC' : st.toUpperCase();
+      badge.className = st;
     } else {
-      listEl.innerHTML = alerts.slice(-20).reverse().map(line => {
-        const cls = line.includes('[ALERT]') ? 'alert' : line.includes('[RECOVERED]') ? 'recover' : 'other';
-        return `<div class="alert-line ${cls}">${escHtml(line)}</div>`;
-      }).join('');
+      dot.className = 'err'; badge.textContent = 'NO DATA'; badge.className = '';
     }
+    document.getElementById('wd-badge').textContent = 'watchdog: ' + (wd.state || '—').toUpperCase();
+  } catch(e) { document.getElementById('hb-dot').className = 'err'; }
+}
 
-    document.getElementById('pulse-dot').className = 'dot';
-    document.getElementById('footer-msg').textContent = 'Auto-refresh every 5s — Last: ' + new Date().toLocaleTimeString('ja-JP');
+// ── Sessions ──
+async function loadSessions() {
+  try {
+    const dates = await fetch(API + '/api/sessions').then(r => r.json());
+    const list = document.getElementById('date-list');
+    if (!dates || !dates.length) { list.innerHTML = '<div class="empty-hint">No sessions found</div>'; return; }
+    list.innerHTML = '';
+    dates.forEach(d => {
+      const el = document.createElement('div');
+      el.className = 'date-item'; el.textContent = d; el.dataset.date = d;
+      el.addEventListener('click', () => selectDate(d));
+      list.appendChild(el);
+    });
+    selectDate(dates[0]);
   } catch(e) {
-    document.getElementById('pulse-dot').className = 'dot off';
-    document.getElementById('footer-msg').textContent = 'Connection error: ' + e.message;
+    document.getElementById('date-list').innerHTML = '<div class="empty-hint" style="color:var(--red)">Load error</div>';
+    showErr('Sessions: ' + e.message);
   }
 }
 
-function escHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function selectDate(date) {
+  currentDate = date;
+  document.querySelectorAll('.date-item').forEach(el => el.classList.toggle('active', el.dataset.date === date));
+  loadSession(date);
 }
 
-refresh();
-setInterval(refresh, 5000);
+// ── Session files ──
+let currentSessionMp4s = [];
+
+async function loadSession(date) {
+  document.getElementById('seg-list').innerHTML = '<div class="empty-hint">Loading…</div>';
+  document.getElementById('klog-file-sel').innerHTML = '<option value="">— loading —</option>';
+  try {
+    const d = await fetch(API + '/api/session/' + date).then(r => r.json());
+    currentSessionMp4s = d.mp4s || [];
+    renderSegments(date, currentSessionMp4s);
+    renderKlogSelect(date, d.klogs || []);
+  } catch(e) {
+    document.getElementById('seg-list').innerHTML = '<div class="empty-hint" style="color:var(--red)">Error</div>';
+    showErr('Session: ' + e.message);
+  }
+}
+
+function renderSegments(date, mp4s) {
+  const list = document.getElementById('seg-list');
+  if (!mp4s.length) { list.innerHTML = '<div class="empty-hint">No segments yet</div>'; return; }
+  list.innerHTML = '';
+  mp4s.forEach(f => {
+    const el = document.createElement('div');
+    el.className = 'seg-item'; el.dataset.file = f.name;
+    const timeStr = extractTime(f.name);
+    const sizeMb = f.sizeBytes > 1024 ? (f.sizeBytes / 1048576).toFixed(1) + ' MB' : 'live';
+    el.innerHTML =
+      '<span class="seg-icon">&#127909;</span>' +
+      '<span class="seg-time">' + timeStr + '</span>' +
+      '<span class="seg-name">' + escHtml(f.name) + '</span>' +
+      '<span class="seg-size">' + sizeMb + '</span>' +
+      '<button class="seg-ext-btn" title="外部プレイヤーで開く">▶ Open</button>';
+    el.querySelector('.seg-ext-btn').addEventListener('click', function(e) {
+      e.stopPropagation();
+      openExtPlayer(date, f.name);
+    });
+    el.addEventListener('click', () => playSegment(date, f, el));
+    list.appendChild(el);
+  });
+}
+
+function extractTime(name) {
+  const m = name.match(/_(\d{2})(\d{2})(\d{2})\.mp4$/i);
+  return m ? m[1] + ':' + m[2] + ':' + m[3] : name.replace(/\.mp4$/i, '');
+}
+
+function playSegment(date, fileInfo, el) {
+  currentSegFile = { date, filename: fileInfo.name, epochMs: fileInfo.epochMs || null };
+  document.querySelectorAll('.seg-item').forEach(e => e.classList.remove('active'));
+  if (el) el.classList.add('active');
+  const vid = document.getElementById('vid');
+  const ph  = document.getElementById('video-placeholder');
+  const ext = document.getElementById('ext-bar');
+  ext.classList.remove('show');
+  vid.style.display = 'block'; ph.style.display = 'none';
+  vid.src = API + '/video/' + date + '/' + fileInfo.name;
+  vid.load();
+
+  // Detect Chrome GPU decoder failure: if no metadata after 6s, show external player
+  let metaReceived = false;
+  const onMeta = () => { metaReceived = true; };
+  vid.addEventListener('loadedmetadata', onMeta, { once: true });
+  vid.addEventListener('error', () => {
+    ext.classList.add('show');
+  }, { once: true });
+  setTimeout(() => {
+    vid.removeEventListener('loadedmetadata', onMeta);
+    if (!metaReceived) ext.classList.add('show');
+  }, 6000);
+
+  vid.play().catch(() => {});
+}
+
+// Current active segment for the ext-bar button
+function openExtPlayer(date, filename) {
+  const d = date || (currentSegFile && currentSegFile.date);
+  const f = filename || (currentSegFile && currentSegFile.filename);
+  if (!d || !f) return;
+  fetch(API + '/api/open-video/' + d + '/' + f)
+    .then(r => r.json())
+    .then(j => { if (!j.opened) showErr('Failed to open player'); })
+    .catch(e => showErr('Open: ' + e.message));
+}
+
+// ── Keylog ──
+function renderKlogSelect(date, klogs) {
+  const sel = document.getElementById('klog-file-sel');
+  sel.innerHTML = '';
+  if (!klogs.length) {
+    sel.innerHTML = '<option value="">— none —</option>';
+    setKlogContent('<div class="klog-empty">No keylog</div>');
+    return;
+  }
+  klogs.forEach(f => {
+    const opt = document.createElement('option');
+    opt.value = f.name; opt.textContent = f.name.replace(/\.jsonl?$/i, '');
+    sel.appendChild(opt);
+  });
+  loadKlog(date, klogs[klogs.length - 1].name);
+}
+
+document.getElementById('klog-file-sel').addEventListener('change', function() {
+  if (currentDate && this.value) loadKlog(currentDate, this.value);
+});
+
+async function loadKlog(date, filename) {
+  try {
+    klogData = await fetch(API + '/api/keylog/' + date + '/' + filename).then(r => r.json());
+    renderKlog(klogData);
+  } catch(e) {
+    setKlogContent('<div class="klog-empty">Load error: ' + escHtml(e.message) + '</div>');
+    showErr('Keylog: ' + e.message);
+  }
+}
+
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function formatTs(ts) {
+  if (typeof ts === 'string') return ts.slice(11, 19); // ISO "2026-06-28T19:48:56..." -> "19:48:56"
+  const d = ts > 9999999999 ? new Date(ts) : new Date(ts * 1000);
+  return d.toTimeString().slice(0, 8);
+}
+
+// Replace only the .klog-row elements and empty message, keeping #klog-head-row in place
+function setKlogContent(html) {
+  const body = document.getElementById('klog-body');
+  // Remove rows and empty messages (but keep #klog-head-row)
+  Array.from(body.children).forEach(el => {
+    if (el.id !== 'klog-head-row') el.remove();
+  });
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  while (tmp.firstChild) body.appendChild(tmp.firstChild);
+}
+
+function renderKlog(rows) {
+  const body = document.getElementById('klog-body');
+  // Remove only rows (not the sticky header)
+  Array.from(body.children).forEach(el => { if (el.id !== 'klog-head-row') el.remove(); });
+  if (!rows || !rows.length) {
+    const e = document.createElement('div'); e.className = 'klog-empty'; e.textContent = 'No keystrokes';
+    body.appendChild(e); return;
+  }
+  const frag = document.createDocumentFragment();
+  rows.forEach((row, i) => {
+    const div = document.createElement('div');
+    div.className = 'klog-row'; div.id = 'krow-' + i;
+    div.innerHTML =
+      '<span class="klog-ts">' + escHtml(formatTs(row.ts)) + '</span>' +
+      '<span class="klog-key">' + escHtml(row.key || String(row.vk || '')) + '</span>' +
+      '<span class="klog-win" title="' + escHtml(row.window || '') + '">' + escHtml(row.window || '') + '</span>';
+    frag.appendChild(div);
+  });
+  body.appendChild(frag);
+}
+
+// ── Video ↔ Keylog sync ──
+document.getElementById('klog-sync-toggle').addEventListener('click', function() {
+  klogSync = !klogSync;
+  this.classList.toggle('on', klogSync);
+  this.textContent = klogSync ? 'Sync' : 'Free';
+  if (!klogSync && syncTimer) { clearInterval(syncTimer); syncTimer = null; }
+  if (klogSync) startSyncLoop();
+});
+
+function startSyncLoop() {
+  if (syncTimer) clearInterval(syncTimer);
+  syncTimer = setInterval(syncKlogToVideo, 500);
+}
+
+function syncKlogToVideo() {
+  if (!klogSync || !klogData.length || !currentSegFile) return;
+  const vid = document.getElementById('vid');
+  if (vid.paused && vid.currentTime === 0) return;
+  // Use server-computed epochMs (tz-correct) if available, fallback to JST parse
+  let segEpoch = currentSegFile.epochMs;
+  if (!segEpoch) {
+    const m = currentSegFile.filename.match(/_(\d{2})(\d{2})(\d{2})\.mp4$/i);
+    if (!m) return;
+    segEpoch = new Date(currentSegFile.date + 'T' + m[1] + ':' + m[2] + ':' + m[3] + '+09:00').getTime();
+  }
+  const videoWallMs = segEpoch + vid.currentTime * 1000;
+  let bestIdx = 0, bestDiff = Infinity;
+  klogData.forEach((row, i) => {
+    const rowMs = typeof row.ts === 'string'
+      ? new Date(row.ts).getTime()
+      : typeof row.ts === 'number'
+        ? (row.ts > 9999999999 ? row.ts : row.ts * 1000)
+        : NaN;
+    if (isNaN(rowMs)) return; // Fix: skip NaN to avoid bestIdx stuck at 0
+    const diff = Math.abs(rowMs - videoWallMs);
+    if (diff < bestDiff) { bestDiff = diff; bestIdx = i; }
+  });
+  document.querySelectorAll('.klog-row').forEach(el => el.classList.remove('highlight'));
+  const target = document.getElementById('krow-' + bestIdx);
+  if (target && bestDiff < 60000) {
+    target.classList.add('highlight');
+    target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+}
+
+startSyncLoop();
+refreshStatus();
+setInterval(refreshStatus, 5000);
+loadSessions();
 </script>
 </body>
 </html>
