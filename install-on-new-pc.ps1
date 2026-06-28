@@ -1,8 +1,10 @@
 # install-on-new-pc.ps1 — Revolution PC Activity Recorder: one-shot setup
-# Usage: powershell -ExecutionPolicy Bypass -File install-on-new-pc.ps1
+# Usage: pwsh -ExecutionPolicy Bypass -File install-on-new-pc.ps1
+#        (pwsh 7+ recommended; PS 5.1 may misread Japanese as CP932)
 # Run as the USER (not admin) in an interactive session.
 $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+$OutputEncoding = [System.Text.Encoding]::UTF8
 
 Write-Host "`n=== Revolution セットアップ ===" -ForegroundColor Cyan
 
