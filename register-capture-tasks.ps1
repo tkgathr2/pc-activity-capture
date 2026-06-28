@@ -9,7 +9,9 @@ $ps   = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
 function Register-One($name, $scriptFile, $trigger) {
   $action = New-ScheduledTaskAction -Execute $ps `
     -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$(Join-Path $root $scriptFile)`""
-  $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew
+  $set = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew
+  $set.DisallowStartIfOnBatteries = $false
+  $set.StopIfGoingOnBatteries = $false
   $pr  = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive
   Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue
   Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Settings $set -Principal $pr | Out-Null

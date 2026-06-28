@@ -63,7 +63,7 @@ $MicDevice = "audio=$MicDeviceName"
 function Write-Heartbeat([string]$status, $pid2, [string]$detail) {
   # Omit ffmpeg path and OS username: exposed unauthenticated via dashboard /api/status
   $hb = [ordered]@{ ts=(Get-Date).ToString('o'); status=$status; pid=$pid2; detail=$detail; host=$env:COMPUTERNAME; segmentSec=$SegmentSec }
-  $hb | ConvertTo-Json -Compress | Set-Content -Encoding UTF8 $hbFile
+  [System.IO.File]::WriteAllText($hbFile, ($hb | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
 }
 
 # D6 disk resilience: keep free space above the threshold by deleting the oldest
@@ -124,6 +124,7 @@ function Start-Capture {
               '-map','0:v','-map','1:a',
               '-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p',
               '-c:a','aac','-b:a','128k',
+              '-movflags','+faststart',
               '-use_wallclock_as_timestamps','1','-vsync','cfr','-rtbufsize','256M',
               '-force_key_frames',("expr:gte(t,n_forced*{0})" -f $SegmentSec),
               '-f','segment','-segment_time',$SegmentSec,'-reset_timestamps','1','-strftime','1',
@@ -139,6 +140,14 @@ if (-not (Test-Path $ff)) {
   exit 1
 }
 
+# Startup check: fail fast if mic device doesn't exist (prevents 5s-restart loop)
+$micCheck = & $ff -list_devices true -f dshow -i dummy 2>&1
+if ($micCheck -notmatch [regex]::Escape($MicDeviceName)) {
+  Write-Heartbeat 'error' $PID "Mic device not found: $MicDeviceName. Run: ffmpeg -list_devices true -f dshow -i dummy, then set config.micDevice"
+  Write-Error "Mic device not found: $MicDeviceName"
+  exit 1
+}
+
 Write-Heartbeat 'starting' $PID ''
 while ($true) {
   try {
@@ -147,11 +156,14 @@ while ($true) {
     $freeGB = Ensure-DiskSpace $outRoot $minFreeGB
     if ($freeGB -lt $minFreeGB) {
       Write-Heartbeat 'lowdisk' $PID "free=${freeGB}GB; waiting for disk"
-      Start-Sleep -Seconds 60; continue
+      Start-Sleep -Seconds 60
+      Write-Heartbeat 'lowdisk' $PID "free=${freeGB}GB; still waiting"
+      continue
     }
 
     $cap = Start-Capture
     $proc = $cap.proc
+    if (-not $proc) { Write-Heartbeat 'error' $PID 'ffmpeg Start-Process returned null'; Start-Sleep -Seconds 15; continue }
 
     while (-not $proc.HasExited) {
       $free = Get-FreeGB $outRoot

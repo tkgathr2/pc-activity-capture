@@ -5,7 +5,7 @@
   "micDevice": "",
   "notify": {
     "method": "log",
-    "johcho": "高木豊大（社長）/ 実Slack通知配線はslackWebhookに設定したタイミングで有効化",
+    "johcho": "Takagi (president) / wire slackWebhook to enable Slack alerts",
     "slackWebhook": "",
     "slackChannel": ""
   }

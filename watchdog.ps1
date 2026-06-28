@@ -20,7 +20,7 @@ if (Test-Path $hbFile) {
   try {
     $hb = Get-Content $hbFile -Raw | ConvertFrom-Json
     $age = ((Get-Date) - [datetime]$hb.ts).TotalSeconds
-    if ($age -le $staleSec -and $hb.status -ne 'error') { $down = $false }
+    if ($age -le $staleSec -and $hb.status -ne 'error') { $down = $false; $reason = "recording (age=$([int]$age)s, status=$($hb.status))" }
     elseif ($hb.status -eq 'error') {
       $reason = "capture reported error (age=$([int]$age)s): $($hb.detail)"
     } else {
@@ -50,7 +50,7 @@ function Send-Alert([string]$msg) {
 $shouldAlert = ($state -ne $prev -and $prev -ne 'UNKNOWN') -or ($state -eq 'DOWN' -and $prev -eq 'UNKNOWN')
 if ($shouldAlert) {
   if ($state -eq 'DOWN') {
-    Send-Alert ("[ALERT] PC activity capture is NOT running on {0}/{1}. {2}  -> notify 上長: {3}" -f `
+    Send-Alert ("[ALERT] PC activity capture is NOT running on {0}/{1}. {2}  -> notify manager: {3}" -f `
       $env:COMPUTERNAME, $env:USERNAME, $reason, $cfg.notify.johcho)
   } else {
     Send-Alert ("[RECOVERED] PC activity capture is running again on {0}/{1}." -f $env:COMPUTERNAME, $env:USERNAME)
