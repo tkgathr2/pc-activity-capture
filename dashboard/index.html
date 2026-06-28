@@ -38,7 +38,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',monospace;backgroun
 #rec-badge.error{background:var(--red);color:#fff}
 @keyframes pulse-rec{0%,100%{opacity:1}50%{opacity:.7}}
 #wd-badge{font-size:11px;color:var(--txt2);padding:2px 8px;border-radius:12px;border:1px solid var(--border);background:var(--card)}
-#hb-text{font-size:11px;color:var(--txt3);margin-left:auto}
+#hb-text{font-size:11px;color:var(--txt3)}
+#clock-now{font-size:13px;font-weight:700;color:var(--cyan);font-variant-numeric:tabular-nums;margin-left:auto;letter-spacing:.5px}
+
+/* ─── Video wall-clock overlay ─── */
+#vid-clock{
+  position:absolute;bottom:8px;right:10px;
+  font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;
+  color:#fff;background:rgba(0,0,0,.65);padding:2px 8px;border-radius:4px;
+  pointer-events:none;display:none;letter-spacing:.3px;
+}
+
 
 /* ─── 3-pane ─── */
 #main{display:flex;flex:1;overflow:hidden}
@@ -128,6 +138,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',monospace;backgroun
   <span id="rec-badge">NO DATA</span>
   <span id="wd-badge">watchdog: —</span>
   <span id="hb-text"></span>
+  <span id="clock-now">--:--:--</span>
 </div>
 <div id="main">
   <div id="left">
@@ -138,6 +149,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',monospace;backgroun
     <div id="video-wrap" style="height:56%;position:relative">
       <div id="video-placeholder">Select a segment to play</div>
       <video id="vid" controls style="display:none;width:100%;height:100%"></video>
+      <div id="vid-clock"></div>
       <div id="ext-bar">
         <p>Chrome の GPU デコーダーが応答しません。<br>外部プレイヤーで再生してください。</p>
         <button id="ext-play-btn" onclick="openExtPlayer()">▶ 外部プレイヤーで開く</button>
@@ -250,7 +262,7 @@ function renderSegments(date, mp4s) {
   mp4s.forEach(f => {
     const el = document.createElement('div');
     el.className = 'seg-item'; el.dataset.file = f.name;
-    const timeStr = extractTime(f.name);
+    const timeStr = extractTimeRange(f.name, 1800);
     const sizeMb = f.sizeBytes > 1024 ? (f.sizeBytes / 1048576).toFixed(1) + ' MB' : 'live';
     el.innerHTML =
       '<span class="seg-icon">&#127909;</span>' +
@@ -270,6 +282,16 @@ function renderSegments(date, mp4s) {
 function extractTime(name) {
   const m = name.match(/_(\d{2})(\d{2})(\d{2})\.mp4$/i);
   return m ? m[1] + ':' + m[2] + ':' + m[3] : name.replace(/\.mp4$/i, '');
+}
+// R-CLOCK-3: HH:MM〜HH:MM range display
+function extractTimeRange(name, segSec) {
+  const m = name.match(/_(\d{2})(\d{2})(\d{2})\.mp4$/i);
+  if (!m) return extractTime(name);
+  const s0 = parseInt(m[1])*3600 + parseInt(m[2])*60 + parseInt(m[3]);
+  const s1 = s0 + (segSec || 1800);
+  const pad = n => String(n).padStart(2,'0');
+  const fmt = s => pad(Math.floor(s/3600)%24) + ':' + pad(Math.floor(s/60)%60);
+  return fmt(s0) + '〜' + fmt(s1);
 }
 
 function playSegment(date, fileInfo, el) {
@@ -295,6 +317,23 @@ function playSegment(date, fileInfo, el) {
     vid.removeEventListener('loadedmetadata', onMeta);
     if (!metaReceived) ext.classList.add('show');
   }, 6000);
+
+  // R-CLOCK-2: show wall-clock time of the current video frame
+  const vidClock = document.getElementById('vid-clock');
+  if (vid._clockListener) vid.removeEventListener('timeupdate', vid._clockListener);
+  vid._clockListener = function() {
+    let epoch = currentSegFile && currentSegFile.epochMs;
+    if (!epoch) {
+      const cm = currentSegFile && currentSegFile.filename.match(/_(\d{2})(\d{2})(\d{2})\.mp4$/i);
+      if (cm) epoch = new Date(currentSegFile.date + 'T' + cm[1] + ':' + cm[2] + ':' + cm[3] + '+09:00').getTime();
+    }
+    if (!epoch) { vidClock.style.display = 'none'; return; }
+    const d = new Date(epoch + vid.currentTime * 1000);
+    vidClock.textContent = d.toLocaleDateString('ja-JP',{month:'2-digit',day:'2-digit'}) + ' ' + d.toLocaleTimeString('ja-JP');
+    vidClock.style.display = 'block';
+  };
+  vid.addEventListener('timeupdate', vid._clockListener);
+  vidClock.style.display = 'none';
 
   vid.play().catch(() => {});
 }
@@ -431,6 +470,11 @@ startSyncLoop();
 refreshStatus();
 setInterval(refreshStatus, 5000);
 loadSessions();
+// R-CLOCK-1: live current-time clock in header
+(function tickClock() {
+  document.getElementById('clock-now').textContent = new Date().toLocaleTimeString('ja-JP');
+  setTimeout(tickClock, 1000);
+})();
 </script>
 </body>
 </html>
