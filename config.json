@@ -5,7 +5,7 @@
   "micDevice": "",
   "notify": {
     "method": "log",
-    "johcho": "(unset: set upline/notify target here)",
+    "johcho": "高木豊大（社長）/ 実Slack通知配線はslackWebhookに設定したタイミングで有効化",
     "slackWebhook": "",
     "slackChannel": ""
   }
