@@ -52,11 +52,20 @@ function Resolve-Tool([string]$name, $cfgVal) {
 $ff = Resolve-Tool 'ffmpeg'  $cfg.ffmpegPath
 $fp = Resolve-Tool 'ffprobe' $cfg.ffprobePath
 
-# MicDevice: resolved from config.micDevice (set per-PC) or falls back to this PC's hardware ID.
-# On a new PC, run: & ffmpeg -list_devices true -f dshow -i dummy 2>&1 | Select-String audio
-# then set config.micDevice to the device name shown (without the 'audio=' prefix).
-$MicDeviceName = if ($cfg.micDevice) { $cfg.micDevice } else {
-  '@device_cm_{33D9A762-90C8-11D0-BD43-00A0C911CE86}\wave_{3B4BEB3B-66AA-4FB2-BD31-F6ABCFD8AF2B}'
+# MicDevice: use config.micDevice if set, otherwise auto-detect the first available
+# DirectShow audio device. On a new PC this requires no manual configuration.
+function Get-FirstAudioDevice([string]$ffBin) {
+  $out = & $ffBin -list_devices true -f dshow -i dummy 2>&1
+  foreach ($line in $out) {
+    # ffmpeg prints: [dshow @ ptr] "Device Name" (audio)
+    if ($line -match '"([^"]+)"\s*\(audio\)') { return $matches[1] }
+  }
+  return $null
+}
+$MicDeviceName = if ($cfg.micDevice) { $cfg.micDevice } else { Get-FirstAudioDevice $ff }
+if (-not $MicDeviceName) {
+  Write-Heartbeat 'error' $PID 'No audio device found. Run: ffmpeg -list_devices true -f dshow -i dummy'
+  Write-Error 'No DirectShow audio device found'; exit 1
 }
 $MicDevice = "audio=$MicDeviceName"
 
@@ -134,9 +143,10 @@ if (-not (Test-Path $ff)) {
   exit 1
 }
 
-# Startup check: fail fast if mic device doesn't exist (prevents 5s-restart loop)
+# Startup check: confirm mic device is reachable (auto-detect already validated above,
+# but a second check guards against hot-unplug between detection and capture start).
 $micCheck = & $ff -list_devices true -f dshow -i dummy 2>&1
-if (-not ($micCheck -match [regex]::Escape($MicDeviceName))) {
+if (-not ($micCheck | Where-Object { $_ -match [regex]::Escape($MicDeviceName) })) {
   Write-Heartbeat 'error' $PID "Mic device not found: $MicDeviceName. Run: ffmpeg -list_devices true -f dshow -i dummy, then set config.micDevice"
   Write-Error "Mic device not found: $MicDeviceName"
   exit 1

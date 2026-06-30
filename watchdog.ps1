@@ -53,6 +53,19 @@ function Send-Alert([string]$msg) {
   }
 }
 
+# --- auto-restart daemon if DOWN (heartbeat stale or status=error) ---
+if ($state -eq 'DOWN') {
+  $daemonScript = Join-Path $root 'run-capture-daemon.ps1'
+  $running = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like '*run-capture-daemon*' })
+  if ($running.Count -eq 0 -and (Test-Path $daemonScript)) {
+    Start-Process powershell -ArgumentList @(
+      '-NoProfile', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
+      '-File', "`"$daemonScript`"") -ErrorAction SilentlyContinue
+    Send-Alert ("[AUTO-RESTART] Daemon was $reason; restarted by watchdog on $env:COMPUTERNAME/$env:USERNAME.")
+  }
+}
+
 # --- alert on transition OR on first-ever run if already DOWN ---
 $shouldAlert = ($state -ne $prev -and $prev -ne 'UNKNOWN') -or ($state -eq 'DOWN' -and $prev -eq 'UNKNOWN')
 if ($shouldAlert) {
