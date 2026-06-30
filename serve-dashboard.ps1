@@ -57,6 +57,7 @@ $handlerScript = {
       Send-Error $resp 'Not Found' 404; return
     }
     $fileLen = (Get-Item $filePath).Length
+    if ($fileLen -eq 0) { Send-Error $resp 'Not Found' 404; return }  # empty file = not yet usable
     $resp.AddHeader('Accept-Ranges', 'bytes')
     $resp.ContentType = $mimeType
 
@@ -243,6 +244,9 @@ $handlerScript = {
 $pool = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspacePool(1, 20)
 $pool.Open()
 
+# Track in-flight PowerShell instances so we can EndInvoke+Dispose when done.
+$pending = [System.Collections.Generic.List[hashtable]]::new()
+
 while ($listener.IsListening) {
   try {
     $ctx = $listener.GetContext()   # blocks until next connection arrives
@@ -254,9 +258,23 @@ while ($listener.IsListening) {
       dashDir     = $dashDir
       stateDir    = $stateDir
     })
-    [void]$ps.BeginInvoke()         # non-blocking: dispatch and loop immediately
+    $ar = $ps.BeginInvoke()         # non-blocking: dispatch and loop immediately
+    $pending.Add(@{ ps = $ps; ar = $ar })
+
+    # Non-blocking GC: reap completed instances on every accept iteration
+    $done = @($pending | Where-Object { $_.ar.IsCompleted })
+    foreach ($item in $done) {
+      try { $item.ps.EndInvoke($item.ar) } catch {}
+      $item.ps.Dispose()
+      [void]$pending.Remove($item)
+    }
   } catch { Write-Host "[dashboard] accept-err: $_" }
 }
 
+# Drain remaining instances on clean shutdown
+foreach ($item in $pending) {
+  try { $item.ps.EndInvoke($item.ar) } catch {}
+  $item.ps.Dispose()
+}
 $pool.Close()
 $listener.Stop()

@@ -168,7 +168,8 @@ while ($true) {
       # keylog watchdog: restart keylog if it died unexpectedly
       if ($cap.key -and $cap.key.HasExited) {
         $kl2 = Start-KeyLog $cap.dayDir
-        $cap.key = $kl2.proc
+        $cap.key     = $kl2.proc
+        $cap.keyPath = $kl2.path  # update path so dashboard /api/keylog finds the new file
       }
 
       # Midnight rollover: if calendar day changed, restart ffmpeg in new dayDir
