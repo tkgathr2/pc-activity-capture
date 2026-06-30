@@ -43,6 +43,16 @@ consecutive files. Each segment's `t0_video` = its strftime filename (wall-clock
 | D5 A/V sync <=200ms | PASS | ffprobe packet pts on a segment: v_last=9.900 a_last=9.998 -> diff 98ms <= 200ms. Measured on 10s segment; full 1800s drift not run (bounded by -vsync cfr + wallclock ts). |
 | D6 disk resilience | IMPLEMENTED | Ensure-DiskSpace deletes oldest *.mp4/*.jsonl when free < minFreeGB(10), checked before each capture and during the recording loop; Get-FreeGB returns 9999 on error so it never crashes. Disk-fill stress not run. |
 
+## ととのうくん整理（2026-06-30）
+
+| # | 観点 | 対処 |
+|---|---|---|
+| C1🔴 | `session-meta.json` 全コード非参照 | `run-capture-daemon.ps1`の生成ブロック削除。ダッシュボードはファイル名パターンで時刻導出済み |
+| C1🟡 | `heartbeat.json` の `host`・`segmentSec` 未参照 | `Write-Heartbeat`から両フィールドを削除 |
+| C3🟡 | `keylog.ps1` VK全件ポーリング12ms | ポーリング間隔25msに変更（CPU負荷約半減・全キー捕捉は維持） |
+| C3🟡 | `syncKlogToVideo` O(n)線形スキャン | binary search O(log n)に変更（`klogRowMs`ヘルパー追加） |
+| C4🟡 | `alerts.log` 無制限蓄積＋全件読み | watchdog `Send-Alert`に500行ローテーション追加 |
+
 ## Open Questions (unchanged, per spec section 7)
 
 - OQ-1 notify target: defaulted to `notify.method=log` (alerts to state\alerts.log only).

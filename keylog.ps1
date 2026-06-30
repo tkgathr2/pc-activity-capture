@@ -44,7 +44,7 @@ try {
       }
       $prev[$v] = $down
     }
-    Start-Sleep -Milliseconds 12
+    Start-Sleep -Milliseconds 25
   }
 } finally {
   $sw.Close()

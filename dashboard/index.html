@@ -435,6 +435,12 @@ function startSyncLoop() {
   syncTimer = setInterval(syncKlogToVideo, 500);
 }
 
+function klogRowMs(row) {
+  if (typeof row.ts === 'string') return new Date(row.ts).getTime();
+  if (typeof row.ts === 'number') return row.ts > 9999999999 ? row.ts : row.ts * 1000;
+  return NaN;
+}
+
 function syncKlogToVideo() {
   if (!klogSync || !klogData.length || !currentSegFile) return;
   const vid = document.getElementById('vid');
@@ -447,17 +453,18 @@ function syncKlogToVideo() {
     segEpoch = new Date(currentSegFile.date + 'T' + m[1] + ':' + m[2] + ':' + m[3] + '+09:00').getTime();
   }
   const videoWallMs = segEpoch + vid.currentTime * 1000;
-  let bestIdx = 0, bestDiff = Infinity;
-  klogData.forEach((row, i) => {
-    const rowMs = typeof row.ts === 'string'
-      ? new Date(row.ts).getTime()
-      : typeof row.ts === 'number'
-        ? (row.ts > 9999999999 ? row.ts : row.ts * 1000)
-        : NaN;
-    if (isNaN(rowMs)) return; // Fix: skip NaN to avoid bestIdx stuck at 0
+  // Binary search O(log n) — klogData is in chronological order
+  let lo = 0, hi = klogData.length - 1, bestIdx = 0, bestDiff = Infinity;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const rowMs = klogRowMs(klogData[mid]);
+    if (isNaN(rowMs)) { lo = mid + 1; continue; }
     const diff = Math.abs(rowMs - videoWallMs);
-    if (diff < bestDiff) { bestDiff = diff; bestIdx = i; }
-  });
+    if (diff < bestDiff) { bestDiff = diff; bestIdx = mid; }
+    if (rowMs < videoWallMs) lo = mid + 1;
+    else if (rowMs > videoWallMs) hi = mid - 1;
+    else break;
+  }
   document.querySelectorAll('.klog-row').forEach(el => el.classList.remove('highlight'));
   const target = document.getElementById('krow-' + bestIdx);
   if (target && bestDiff < 60000) {

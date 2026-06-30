@@ -37,6 +37,13 @@ if (Test-Path $wsFile) { try { $prev = (Get-Content $wsFile -Raw | ConvertFrom-J
 function Send-Alert([string]$msg) {
   $line = "$((Get-Date).ToString('o'))  $msg"
   Add-Content -Encoding UTF8 $alogFile $line
+  # Rotate: keep last 500 lines to bound file size and read cost
+  try {
+    $ls = [System.IO.File]::ReadAllLines($alogFile, [System.Text.Encoding]::UTF8)
+    if ($ls.Count -gt 500) {
+      [System.IO.File]::WriteAllLines($alogFile, ($ls | Select-Object -Last 500), [System.Text.UTF8Encoding]::new($false))
+    }
+  } catch {}
   $method = "$($cfg.notify.method)".ToLower()
   if ($method -eq 'slack' -and $cfg.notify.slackWebhook) {
     try {

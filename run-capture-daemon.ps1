@@ -62,7 +62,7 @@ $MicDevice = "audio=$MicDeviceName"
 
 function Write-Heartbeat([string]$status, $pid2, [string]$detail) {
   # Omit ffmpeg path and OS username: exposed unauthenticated via dashboard /api/status
-  $hb = [ordered]@{ ts=(Get-Date).ToString('o'); status=$status; pid=$pid2; detail=$detail; host=$env:COMPUTERNAME; segmentSec=$SegmentSec }
+  $hb = [ordered]@{ ts=(Get-Date).ToString('o'); status=$status; pid=$pid2; detail=$detail }
   [System.IO.File]::WriteAllText($hbFile, ($hb | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
 }
 
@@ -109,12 +109,6 @@ function Start-Capture {
 
   # one continuous keylog for this capture run (timestamps aligned to wall clock)
   $kl = Start-KeyLog $dayDir
-
-  # session meta: t0 anchor for syncing keylog to video. Omit mic/ffmpeg paths (security).
-  ([ordered]@{ session_start=$start.ToString('o'); day=$day; t0=$start.ToString('o');
-               keylog=$kl.path; fps=$Fps; segmentSec=$SegmentSec;
-               segment_name='%Y-%m-%d_%H%M%S.mp4'; mode='segment-muxer-gapless' } |
-    ConvertTo-Json) | Set-Content -Encoding UTF8 (Join-Path $dayDir 'session-meta.json')
 
   # GAPLESS recording: single ffmpeg, segment muxer. -force_key_frames puts a
   # keyframe exactly at each boundary so segments are exactly SegmentSec long and
