@@ -136,7 +136,7 @@ if (-not (Test-Path $ff)) {
 
 # Startup check: fail fast if mic device doesn't exist (prevents 5s-restart loop)
 $micCheck = & $ff -list_devices true -f dshow -i dummy 2>&1
-if ($micCheck -notmatch [regex]::Escape($MicDeviceName)) {
+if (-not ($micCheck -match [regex]::Escape($MicDeviceName))) {
   Write-Heartbeat 'error' $PID "Mic device not found: $MicDeviceName. Run: ffmpeg -list_devices true -f dshow -i dummy, then set config.micDevice"
   Write-Error "Mic device not found: $MicDeviceName"
   exit 1
@@ -151,6 +151,7 @@ while ($true) {
     if ($freeGB -lt $minFreeGB) {
       Write-Heartbeat 'lowdisk' $PID "free=${freeGB}GB; waiting for disk"
       Start-Sleep -Seconds 60
+      $freeGB = Get-FreeGB $outRoot
       Write-Heartbeat 'lowdisk' $PID "free=${freeGB}GB; still waiting"
       continue
     }
@@ -159,6 +160,7 @@ while ($true) {
     $proc = $cap.proc
     if (-not $proc) { Write-Heartbeat 'error' $PID 'ffmpeg Start-Process returned null'; Start-Sleep -Seconds 15; continue }
 
+    $plannedStop = $false  # set true on midnight rollover to skip the error-restart penalty
     while (-not $proc.HasExited) {
       $free = Get-FreeGB $outRoot
       if ($free -lt $minFreeGB) { Ensure-DiskSpace $outRoot $minFreeGB | Out-Null }
@@ -175,6 +177,7 @@ while ($true) {
         Write-Heartbeat 'recording' $proc.Id "midnight-rollover; stopping ffmpeg for day boundary"
         try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
         try { if ($cap.key -and -not $cap.key.HasExited) { Stop-Process -Id $cap.key.Id -Force -ErrorAction SilentlyContinue } } catch {}
+        $plannedStop = $true
         break  # exit inner loop; outer loop calls Start-Capture with new day
       }
 
@@ -186,7 +189,7 @@ while ($true) {
 
     # ffmpeg exited (rollover break or unexpected exit). Clean child keylog and restart.
     try { if ($cap -and $cap.key -and -not $cap.key.HasExited) { Stop-Process -Id $cap.key.Id -Force -ErrorAction SilentlyContinue } } catch {}
-    if ($proc -and $proc.HasExited -and $proc.ExitCode -ne 0) {
+    if (-not $plannedStop -and $proc -and $proc.HasExited -and $proc.ExitCode -ne 0) {
       Write-Heartbeat 'error' $PID "ffmpeg exited (code=$($proc.ExitCode)); restarting"
       Start-Sleep -Seconds 5
     }

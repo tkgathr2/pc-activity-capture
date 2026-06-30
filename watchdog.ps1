@@ -20,7 +20,7 @@ if (Test-Path $hbFile) {
   try {
     $hb = Get-Content $hbFile -Raw | ConvertFrom-Json
     $age = ((Get-Date) - [datetime]$hb.ts).TotalSeconds
-    if ($age -le $staleSec -and $hb.status -ne 'error') { $down = $false; $reason = "recording (age=$([int]$age)s, status=$($hb.status))" }
+    if ($age -le $staleSec -and $hb.status -notin @('error','lowdisk')) { $down = $false; $reason = "recording (age=$([int]$age)s, status=$($hb.status))" }
     elseif ($hb.status -eq 'error') {
       $reason = "capture reported error (age=$([int]$age)s): $($hb.detail)"
     } else {
@@ -64,6 +64,6 @@ if ($shouldAlert) {
   }
 }
 
-([ordered]@{ state=$state; reason=$reason; checked=(Get-Date).ToString('o') } |
-  ConvertTo-Json -Compress) | Set-Content -Encoding UTF8 $wsFile
+$wsJson = [ordered]@{ state=$state; reason=$reason; checked=(Get-Date).ToString('o') } | ConvertTo-Json -Compress
+[System.IO.File]::WriteAllText($wsFile, $wsJson, [System.Text.UTF8Encoding]::new($false))
 Write-Host "[watchdog] $state  $reason"

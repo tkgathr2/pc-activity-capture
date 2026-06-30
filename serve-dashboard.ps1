@@ -228,7 +228,9 @@ $handlerScript = {
       } else { Send-Error $resp 'Not found' 404 }
     }
 
-  } catch { }
+  } catch {
+    try { Add-Content -Path (Join-Path $stateDir 'dashboard-errors.log') -Value "$((Get-Date).ToString('o'))  $($_.Exception.Message)" -Encoding UTF8 } catch {}
+  }
   finally {
     if ($resp) { try { $resp.OutputStream.Close() } catch {} }
   }

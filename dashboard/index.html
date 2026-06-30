@@ -444,7 +444,7 @@ function klogRowMs(row) {
 function syncKlogToVideo() {
   if (!klogSync || !klogData.length || !currentSegFile) return;
   const vid = document.getElementById('vid');
-  if (vid.paused && vid.currentTime === 0) return;
+  if (vid.paused) return;
   // Use server-computed epochMs (tz-correct) if available, fallback to JST parse
   let segEpoch = currentSegFile.epochMs;
   if (!segEpoch) {
