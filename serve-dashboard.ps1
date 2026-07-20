@@ -209,6 +209,30 @@ $handlerScript = {
       }
     }
 
+    # /api/reports  — list generated weekly reports
+    elseif ($path -eq '/api/reports') {
+      $rptDir  = Join-Path $stateDir 'reports'
+      $reports = @()
+      if (Test-Path $rptDir) {
+        $reports = @(Get-ChildItem $rptDir -Filter '*.html' -ErrorAction SilentlyContinue |
+          Sort-Object Name -Descending | ForEach-Object {
+            @{ file=$_.Name; generated=$_.LastWriteTime.ToString('o'); sizeBytes=$_.Length }
+          })
+      }
+      Send-Json $resp $reports
+    }
+
+    # /reports/{file}  — serve a weekly report HTML
+    elseif ($path -match '^/reports/(\d{4}-\d{2}-\d{2}\.html)$') {
+      $filename = $Matches[1]
+      $filePath = Join-Path (Join-Path $stateDir 'reports') $filename
+      $rptFull  = [System.IO.Path]::GetFullPath($filePath)
+      $rptBase  = [System.IO.Path]::GetFullPath((Join-Path $stateDir 'reports')) + [System.IO.Path]::DirectorySeparatorChar
+      if (-not $rptFull.StartsWith($rptBase)) { Send-Error $resp 'Forbidden' 403 }
+      elseif (-not (Test-Path $filePath -PathType Leaf)) { Send-Error $resp 'Not Found' 404 }
+      else { Stream-File $resp $filePath 'text/html; charset=utf-8' $null }
+    }
+
     # static dashboard/
     else {
       $relPath = $path.TrimStart('/')

@@ -138,6 +138,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',monospace;backgroun
   <span id="rec-badge">NO DATA</span>
   <span id="wd-badge">watchdog: —</span>
   <span id="hb-text"></span>
+  <div id="report-menu" style="position:relative;margin-left:auto;margin-right:8px">
+    <button id="report-btn" onclick="toggleReports()" style="font-size:11px;font-weight:600;letter-spacing:.5px;padding:4px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--txt2);cursor:pointer">Weekly Reports ▾</button>
+    <div id="report-dropdown" style="display:none;position:absolute;right:0;top:110%;min-width:220px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:6px;z-index:999;box-shadow:0 4px 20px rgba(0,0,0,.5)">
+      <div id="report-list" style="font-size:12px;color:var(--txt2)">Loading…</div>
+    </div>
+  </div>
   <span id="clock-now">--:--:--</span>
 </div>
 <div id="main">
@@ -472,6 +478,38 @@ function syncKlogToVideo() {
     target.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }
 }
+
+// ── Weekly Reports ──
+let reportsLoaded = false;
+async function toggleReports() {
+  const dd = document.getElementById('report-dropdown');
+  const open = dd.style.display !== 'none';
+  dd.style.display = open ? 'none' : 'block';
+  if (!open && !reportsLoaded) {
+    reportsLoaded = true;
+    try {
+      const reports = await fetch(API + '/api/reports').then(r => r.json());
+      const el = document.getElementById('report-list');
+      if (!reports || !reports.length) {
+        el.innerHTML = '<div style="padding:8px;color:var(--txt3)">レポートなし</div>';
+      } else {
+        el.innerHTML = reports.map(r => {
+          const week = r.file.replace('.html','');
+          const gen  = new Date(r.generated).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
+          return `<a href="/reports/${r.file}" target="_blank" style="display:block;padding:7px 10px;border-radius:6px;color:var(--txt1);text-decoration:none;white-space:nowrap" onmouseover="this.style.background='rgba(255,255,255,.07)'" onmouseout="this.style.background=''">`
+               + `<span style="font-weight:600">${week}</span>`
+               + `<span style="float:right;color:var(--txt3);font-size:10px;margin-left:12px">${gen}</span></a>`;
+        }).join('');
+      }
+    } catch(e) {
+      document.getElementById('report-list').textContent = 'Error: ' + e.message;
+    }
+  }
+}
+document.addEventListener('click', e => {
+  if (!document.getElementById('report-menu').contains(e.target))
+    document.getElementById('report-dropdown').style.display = 'none';
+});
 
 startSyncLoop();
 refreshStatus();
