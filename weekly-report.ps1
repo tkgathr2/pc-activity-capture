@@ -1,4 +1,4 @@
-# weekly-report.ps1 - generate an HTML summary for one week of capture data.
+﻿# weekly-report.ps1 - generate an HTML summary for one week of capture data.
 # Usage:
 #   .\weekly-report.ps1                 # last full week (Mon-Sun)
 #   .\weekly-report.ps1 -WeekOffset 0  # current week so far
@@ -87,6 +87,24 @@ foreach ($day in $days) {
   }
 }
 $topApps = $weekAppMap.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 15
+
+# --- category rollup for pie chart ---
+function Get-WinCategory([string]$w) {
+  if ($w -match 'Claude')                                              { return 'AI・Claude Code' }
+  if ($w -match 'Cursor|PowerShell|ターミナル|Terminal|VSCode|vim')   { return '開発ツール' }
+  if ($w -match 'LINE|メール|Gmail|Outlook|Mail')                     { return 'メール・LINE' }
+  if ($w -match 'Excel|スプレッドシート|Word|PowerPoint|Notion')      { return 'ドキュメント' }
+  if ($w -match 'Chrome|Firefox|Edge|Safari')                          { return 'ブラウザ' }
+  return 'Slack・業務タスク'
+}
+$catMap = @{}
+foreach ($k in $weekAppMap.Keys) {
+  $cat = Get-WinCategory $k
+  if ($catMap.ContainsKey($cat)) { $catMap[$cat] += $weekAppMap[$k] } else { $catMap[$cat] = $weekAppMap[$k] }
+}
+$catJson = '[' + (($catMap.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object {
+  '{"label":"' + $_.Key + '","value":' + $_.Value + '}'
+}) -join ',') + ']'
 
 # --- totals ---
 $totalMin  = ($days | Measure-Object recMinutes -Sum).Sum
@@ -188,6 +206,58 @@ $appRows
     </tbody>
   </table>
 </div>
+
+<div class="section" style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start">
+  <div style="flex:0 0 auto">
+    <h2 style="margin-bottom:12px">カテゴリ別 時間分布</h2>
+    <canvas id="pieChart" width="220" height="220"></canvas>
+  </div>
+  <div id="pieLegend" style="flex:1;min-width:180px;display:flex;flex-direction:column;gap:8px;justify-content:center;padding-top:28px"></div>
+</div>
+
+<script>
+(function(){
+  const data = $catJson;
+  const total = data.reduce((s,d)=>s+d.value,0);
+  if(!total) return;
+  const COLORS=['#7c3aed','#00d4ff','#22c55e','#f59e0b','#ef4444','#ec4899','#8b5cf6','#06b6d4','#a78bfa'];
+  const canvas = document.getElementById('pieChart');
+  const ctx = canvas.getContext('2d');
+  const cx=110,cy=110,r=95;
+  let angle=-Math.PI/2;
+  data.forEach((d,i)=>{
+    const slice=d.value/total*Math.PI*2;
+    ctx.beginPath(); ctx.moveTo(cx,cy);
+    ctx.arc(cx,cy,r,angle,angle+slice);
+    ctx.closePath();
+    ctx.fillStyle=COLORS[i%COLORS.length];
+    ctx.fill();
+    ctx.strokeStyle='#00000033'; ctx.lineWidth=1; ctx.stroke();
+    angle+=slice;
+  });
+  // donut hole
+  ctx.beginPath(); ctx.arc(cx,cy,46,0,Math.PI*2);
+  ctx.fillStyle=getComputedStyle(document.body).backgroundColor||'#f8f9fa';
+  ctx.fill();
+  // center label
+  ctx.fillStyle=getComputedStyle(document.body).color||'#212529';
+  ctx.font='bold 13px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('活動', cx, cy-8);
+  ctx.font='10px system-ui'; ctx.fillStyle='#888';
+  ctx.fillText('カテゴリ', cx, cy+8);
+  // legend
+  const leg=document.getElementById('pieLegend');
+  data.forEach((d,i)=>{
+    const pct=Math.round(d.value/total*100);
+    const row=document.createElement('div');
+    row.style.cssText='display:flex;align-items:center;gap:8px;font-size:13px';
+    row.innerHTML='<span style="display:inline-block;width:12px;height:12px;border-radius:3px;flex-shrink:0;background:'+COLORS[i%COLORS.length]+'"></span>'
+      +'<span style="flex:1">'+d.label+'</span>'
+      +'<span style="font-weight:700;font-variant-numeric:tabular-nums;min-width:38px;text-align:right">'+pct+'%</span>';
+    leg.appendChild(row);
+  });
+})();
+</script>
 
 <p class="footer">Revolution PC Activity Capture &nbsp;·&nbsp; $([System.Environment]::MachineName) / $([System.Environment]::UserName)</p>
 </body>
