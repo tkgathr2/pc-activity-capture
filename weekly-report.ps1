@@ -111,6 +111,24 @@ $catJson = '[' + (($catMap.GetEnumerator() | Sort-Object Value -Descending | For
   '{{"label":"{0}","value":{1}}}' -f $_.Key, $_.Value
 }) -join ',') + ']'
 
+# --- category breakdown per day (stacked bar chart) ---
+$catNames   = @('AI・Claude Code','開発ツール','メール・LINE','ドキュメント','ブラウザ','Slack・業務タスク')
+$catColors  = @('#7c3aed','#00d4ff','#22c55e','#f59e0b','#ef4444','#ec4899')
+$dayCatRows = @()
+foreach ($day in $days) {
+  $cm = @{}
+  foreach ($k in $day.appMap.Keys) {
+    $cat = Get-WinCategory $k
+    if ($cm.ContainsKey($cat)) { $cm[$cat] += $day.appMap[$k] } else { $cm[$cat] = $day.appMap[$k] }
+  }
+  $vals = @($catNames | ForEach-Object { if ($cm.ContainsKey($_)) { [int]$cm[$_] } else { 0 } })
+  $dayCatRows += ,$vals
+}
+$catNamesJson  = '[' + (($catNames  | ForEach-Object { '"{0}"' -f $_ }) -join ',') + ']'
+$catColorsJson = '[' + (($catColors | ForEach-Object { '"{0}"' -f $_ }) -join ',') + ']'
+$dayCatJson    = ConvertTo-Json -InputObject @($dayCatRows) -Compress
+$dayShortLbls  = ($days | ForEach-Object { '"{0}{1}"' -f $_.dayNameJa, $_.date.Substring(5) }) -join ','
+
 # --- heatmap JSON: 7 x 24 int matrix (day-index x hour) ---
 $heatRows  = @()
 foreach ($d in $days) { $heatRows += ,([int[]]$d.hourArr) }
@@ -271,6 +289,58 @@ $appRows
       +'<span style="flex:1">'+d.label+'</span>'
       +'<span style="font-weight:700;font-variant-numeric:tabular-nums;min-width:38px;text-align:right">'+pct+'%</span>';
     leg.appendChild(row);
+  });
+})();
+</script>
+
+<div class="section">
+  <h2>カテゴリ別 日次推移</h2>
+  <canvas id="stackChart" width="700" height="200" style="width:100%;max-width:700px;display:block"></canvas>
+  <div id="stackLegend" style="display:flex;gap:12px;flex-wrap:wrap;margin-top:10px;font-size:12px"></div>
+</div>
+<script>
+(function(){
+  var cats   = $catNamesJson;
+  var colors = $catColorsJson;
+  var data   = $dayCatJson;
+  var lbls   = [$dayShortLbls];
+  var maxSum = 0;
+  data.forEach(function(row){ var s=row.reduce(function(a,b){return a+b;},0); if(s>maxSum)maxSum=s; });
+  if(!maxSum){ document.getElementById('stackLegend').textContent='データなし'; return; }
+  var canvas = document.getElementById('stackChart');
+  canvas.width = canvas.offsetWidth || 700;
+  var ctx = canvas.getContext('2d');
+  var W=canvas.width, H=canvas.height;
+  var PL=44, PR=8, PT=8, PB=28;
+  var chartW=W-PL-PR, chartH=H-PT-PB;
+  var n=data.length, barW=chartW/n*0.65, gap=chartW/n;
+  data.forEach(function(row,di){
+    var x=PL+di*gap+(gap-barW)/2, y=PT+chartH;
+    row.forEach(function(v,ci){
+      if(!v) return;
+      var bh=v/maxSum*chartH;
+      ctx.fillStyle=colors[ci];
+      ctx.fillRect(x,y-bh,barW,bh);
+      y-=bh;
+    });
+    ctx.fillStyle=getComputedStyle(document.body).color||'#212529';
+    ctx.font='10px system-ui'; ctx.textAlign='center';
+    ctx.fillText(lbls[di],x+barW/2,PT+chartH+16);
+  });
+  ctx.font='9px system-ui'; ctx.textAlign='right';
+  [0,0.25,0.5,0.75,1].forEach(function(t){
+    var y=PT+chartH*(1-t);
+    ctx.fillStyle='rgba(128,128,128,0.55)';
+    ctx.fillText(Math.round(maxSum*t),PL-4,y+4);
+    ctx.strokeStyle='rgba(128,128,128,0.15)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(PL,y); ctx.lineTo(PL+chartW,y); ctx.stroke();
+  });
+  var leg=document.getElementById('stackLegend');
+  cats.forEach(function(c,i){
+    var item=document.createElement('div');
+    item.style.cssText='display:flex;align-items:center;gap:4px';
+    item.innerHTML='<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:'+colors[i]+'"></span><span>'+c+'</span>';
+    leg.appendChild(item);
   });
 })();
 </script>
