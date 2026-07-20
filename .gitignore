@@ -7,3 +7,8 @@ pc-capture-data/
 verify-out.log
 # config.json may contain slackWebhook secret — use config.template.json as safe baseline
 config.local.json
+# IDE / tool metadata
+.claude/
+# Test assets
+dashboard/test-video.html
+dashboard/tiny_vp9.webm
