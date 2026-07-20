@@ -28,6 +28,7 @@ $reportFile   = Join-Path $reportDir "$weekId.html"
 Write-Host "[weekly-report] $weekLabel  ($($weekStart.ToString('MM/dd')) - $($weekEnd.ToString('MM/dd')))"
 
 # --- collect per-day stats ---
+$JaDay = @('日','月','火','水','木','金','土')
 $days = @()
 for ($i = 0; $i -le 6; $i++) {
   $d = $weekStart.AddDays($i)
@@ -37,6 +38,7 @@ for ($i = 0; $i -le 6; $i++) {
   $recMinutes = 0
   $sizeMB     = 0
   $appMap     = @{}   # windowName -> keystroke count
+  $hourArr    = New-Object int[] 24
 
   if (Test-Path $dayDir) {
     $mp4s = @(Get-ChildItem $dayDir -Filter '*.mp4' -ErrorAction SilentlyContinue | Where-Object Length -gt 10000)
@@ -61,6 +63,7 @@ for ($i = 0; $i -le 6; $i++) {
               # strip long window titles to app name (first 40 chars)
               if ($win.Length -gt 40) { $win = $win.Substring(0, 40) }
               if ($appMap.ContainsKey($win)) { $appMap[$win]++ } else { $appMap[$win] = 1 }
+              if ($obj.ts) { try { $h = [datetime]::Parse($obj.ts).Hour; $hourArr[$h]++ } catch {} }
             } catch {}
           }
         } finally { $sr.Close(); $fs.Close() }
@@ -71,9 +74,11 @@ for ($i = 0; $i -le 6; $i++) {
   $days += [PSCustomObject]@{
     date        = $dateStr
     dayName     = $d.ToString('ddd')
+    dayNameJa   = $JaDay[[int]$d.DayOfWeek]
     recMinutes  = $recMinutes
     sizeMB      = $sizeMB
     appMap      = $appMap
+    hourArr     = $hourArr
     hasData     = ($recMinutes -gt 0)
   }
 }
@@ -103,8 +108,14 @@ foreach ($k in $weekAppMap.Keys) {
   if ($catMap.ContainsKey($cat)) { $catMap[$cat] += $weekAppMap[$k] } else { $catMap[$cat] = $weekAppMap[$k] }
 }
 $catJson = '[' + (($catMap.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object {
-  '{"label":"' + $_.Key + '","value":' + $_.Value + '}'
+  '{{"label":"{0}","value":{1}}}' -f $_.Key, $_.Value
 }) -join ',') + ']'
+
+# --- heatmap JSON: 7 x 24 int matrix (day-index x hour) ---
+$heatRows  = @()
+foreach ($d in $days) { $heatRows += ,([int[]]$d.hourArr) }
+$heatJson  = ConvertTo-Json -InputObject @($heatRows) -Compress
+$dayLabels = ($days | ForEach-Object { '"{0}({1})"' -f $_.dayNameJa, $_.date.Substring(5) }) -join ','
 
 # --- totals ---
 $totalMin  = ($days | Measure-Object recMinutes -Sum).Sum
@@ -112,6 +123,7 @@ $totalHr   = [math]::Round($totalMin / 60, 1)
 $totalMB   = ($days | Measure-Object sizeMB -Sum).Sum
 $activeDays = ($days | Where-Object hasData).Count
 $totalKeys  = ($weekAppMap.Values | Measure-Object -Sum).Sum
+$totalKeysSafe = if ($totalKeys -gt 0) { $totalKeys } else { 1 }
 
 # --- build bar chart data (max bar = longest day) ---
 $maxMin = ($days | Measure-Object recMinutes -Maximum).Maximum
@@ -125,7 +137,7 @@ foreach ($d in $days) {
   $cls    = if ($d.hasData) { '' } else { ' style="opacity:.35"' }
   $dayRows += @"
     <tr$cls>
-      <td class="dn">$($d.dayName)</td>
+      <td class="dn">$($d.dayNameJa)</td>
       <td class="dt">$($d.date)</td>
       <td class="bar-cell"><div class="bar" style="width:$barPct%"></div></td>
       <td class="num">$($hr)h</td>
@@ -138,7 +150,8 @@ foreach ($d in $days) {
 $appRows = ''
 $rank = 1
 foreach ($a in $topApps) {
-  $appRows += "      <tr><td class='rank'>$rank</td><td class='appname'>$([System.Web.HttpUtility]::HtmlEncode($a.Key))</td><td class='num'>$($a.Value)</td></tr>`n"
+  $pct = [math]::Round($a.Value / $totalKeysSafe * 100, 1)
+  $appRows += "      <tr><td class='rank'>$rank</td><td class='appname'>$([System.Web.HttpUtility]::HtmlEncode($a.Key))</td><td class='num'>$($a.Value)</td><td class='num muted'>$pct%</td></tr>`n"
   $rank++
 }
 
@@ -173,6 +186,9 @@ $html = @"
   .dt{color:var(--muted);font-size:.8rem;width:90px}
   .rank{color:var(--muted);width:30px;font-size:.8rem}
   .appname{font-size:.85rem}
+  .muted{color:var(--muted)}
+  #heatWrap{overflow-x:auto}
+  .heat-grid{display:grid;gap:2px}
   .footer{margin-top:24px;font-size:.75rem;color:var(--muted)}
 </style>
 </head>
@@ -200,7 +216,7 @@ $dayRows
 <div class="section">
   <h2>アプリ別キーストローク（上位 15）</h2>
   <table>
-    <thead><tr><th>#</th><th>ウィンドウ / アプリ</th><th class="num">キー数</th></tr></thead>
+    <thead><tr><th>#</th><th>ウィンドウ / アプリ</th><th class="num">キー数</th><th class="num">割合</th></tr></thead>
     <tbody>
 $appRows
     </tbody>
@@ -256,6 +272,48 @@ $appRows
       +'<span style="font-weight:700;font-variant-numeric:tabular-nums;min-width:38px;text-align:right">'+pct+'%</span>';
     leg.appendChild(row);
   });
+})();
+</script>
+
+<div class="section">
+  <h2>時間帯別アクティビティ（キーストローク密度）</h2>
+  <div id="heatWrap"></div>
+</div>
+
+<script>
+(function(){
+  var heat = $heatJson;
+  var dayLbls = [$dayLabels];
+  var flat = [];
+  for (var di = 0; di < heat.length; di++) for (var hi = 0; hi < 24; hi++) flat.push(heat[di][hi]);
+  var MAX = Math.max.apply(null, flat);
+  if (!MAX) { document.getElementById('heatWrap').textContent = 'この週のキーログデータなし'; return; }
+  var COLS = heat.length;
+  var grid = document.createElement('div');
+  grid.className = 'heat-grid';
+  grid.style.gridTemplateColumns = '38px repeat(' + COLS + ',1fr)';
+  var hd = document.createElement('div'); grid.appendChild(hd);
+  dayLbls.forEach(function(d){
+    var c = document.createElement('div');
+    c.style.cssText = 'font-size:10px;font-weight:600;text-align:center;padding-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    c.textContent = d; c.title = d;
+    grid.appendChild(c);
+  });
+  for (var h = 0; h < 24; h++) {
+    var lbl = document.createElement('div');
+    lbl.style.cssText = 'font-size:10px;color:var(--muted);text-align:right;padding-right:5px;line-height:17px';
+    lbl.textContent = (h < 10 ? '0' : '') + h + ':00';
+    grid.appendChild(lbl);
+    for (var d2 = 0; d2 < COLS; d2++) {
+      var v = heat[d2][h];
+      var op = v ? (0.1 + (v / MAX) * 0.9).toFixed(3) : '0';
+      var cell = document.createElement('div');
+      cell.style.cssText = 'height:17px;border-radius:2px;background:rgba(77,171,247,' + op + ')';
+      cell.title = dayLbls[d2] + ' ' + (h < 10 ? '0' : '') + h + ':00 — ' + v + ' keys';
+      grid.appendChild(cell);
+    }
+  }
+  document.getElementById('heatWrap').appendChild(grid);
 })();
 </script>
 
