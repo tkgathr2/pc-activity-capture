@@ -2,7 +2,9 @@
   "captureRoot": "%USERPROFILE%\\pc-capture-data",
   "staleSeconds": 300,
   "minFreeGB": 10,
+  "recordAudio": false,
   "micDevice": "",
+  "staffLabel": "",
   "notify": {
     "method": "log",
     "johcho": "Takagi (president) / wire slackWebhook to enable Slack alerts",

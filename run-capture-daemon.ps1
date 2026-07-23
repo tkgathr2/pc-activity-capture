@@ -18,6 +18,21 @@ $cfg       = Get-Content (Join-Path $root 'config.json') -Raw | ConvertFrom-Json
 $outRoot   = [Environment]::ExpandEnvironmentVariables($cfg.captureRoot)
 $minFreeGB = if ($cfg.minFreeGB) { [double]$cfg.minFreeGB } else { 10 }
 
+# PC identity stamp (Phase-2 bridge): so a central NAS can attribute each PC's
+# data to a person. Created once; edit staffLabel later to a human name if wanted.
+# config.staffLabel (if set) wins; otherwise default to COMPUTERNAME.
+$machineFile = Join-Path $stateDir 'machine.json'
+if (-not (Test-Path $machineFile)) {
+  $label = if ($cfg.staffLabel) { "$($cfg.staffLabel)" } else { $env:COMPUTERNAME }
+  $mj = [ordered]@{
+    computerName = $env:COMPUTERNAME
+    userName     = $env:USERNAME
+    staffLabel   = $label
+    createdAt    = (Get-Date).ToString('o')
+  }
+  [System.IO.File]::WriteAllText($machineFile, ($mj | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
+}
+
 # Guard: if captureRoot has unresolved env var placeholder, fail fast
 if ($outRoot -match '%\w+%') {
   Write-Error "config.json captureRoot has unresolved env var: $outRoot"; exit 1
@@ -62,12 +77,20 @@ function Get-FirstAudioDevice([string]$ffBin) {
   }
   return $null
 }
-$MicDeviceName = if ($cfg.micDevice) { $cfg.micDevice } else { Get-FirstAudioDevice $ff }
-if (-not $MicDeviceName) {
-  Write-Heartbeat 'error' $PID 'No audio device found. Run: ffmpeg -list_devices true -f dshow -i dummy'
-  Write-Error 'No DirectShow audio device found'; exit 1
+# Audio is OPTIONAL and OFF by default. Rationale: mic device names differ per PC,
+# change between direct/RDP sessions (e.g. "リモート オーディオ" only exists over
+# Remote Desktop), and Japanese names round-trip badly through PS5.1 -> ffmpeg -5
+# crashes. For staff activity capture, screen + keylog is the core value, so we
+# record VIDEO-ONLY unless config.recordAudio is explicitly true AND a mic exists.
+# This makes the daemon record reliably on ANY PC with zero audio configuration.
+$RecordAudio   = [bool]$cfg.recordAudio
+$MicDeviceName = $null
+if ($RecordAudio) {
+  $MicDeviceName = if ($cfg.micDevice) { $cfg.micDevice } else { Get-FirstAudioDevice $ff }
+  # Never exit over audio: if no mic, fall back to video-only instead of crashing.
+  if (-not $MicDeviceName) { $RecordAudio = $false }
 }
-$MicDevice = "audio=$MicDeviceName"
+$MicDevice = if ($MicDeviceName) { "audio=$MicDeviceName" } else { $null }
 
 function Write-Heartbeat([string]$status, $pid2, [string]$detail) {
   # Omit ffmpeg path and OS username: exposed unauthenticated via dashboard /api/status
@@ -123,12 +146,19 @@ function Start-Capture {
   # keyframe exactly at each boundary so segments are exactly SegmentSec long and
   # split with no lost frames. -strftime names files by wall clock = t0_video.
   $outPat = Join-Path $dayDir '%Y-%m-%d_%H%M%S.mp4'
-  $ffArgs = @('-y','-f','gdigrab','-framerate',$Fps,'-i','desktop','-video_size','1920x1080','-thread_queue_size','512','-f','dshow','-i',$MicDevice,'-thread_queue_size','512',
-              '-map','0:v','-map','1:a',
-              '-vf','scale=trunc(iw/2)*2:trunc(ih/2)*2',
-              '-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p',
-              '-c:a','aac','-b:a','128k',
-              '-movflags','+faststart',
+  # Video input (always). scale=trunc(.../2)*2 rounds odd desktop resolutions to even
+  # so libx264 never errors ("width not divisible by 2") on multi-monitor/high-DPI.
+  $ffArgs = @('-y','-f','gdigrab','-framerate',$Fps,'-i','desktop','-video_size','1920x1080','-thread_queue_size','512')
+  # Audio input (optional): only added when a mic was found and recordAudio is on.
+  if ($RecordAudio -and $MicDevice) {
+    $ffArgs += @('-f','dshow','-i',$MicDevice,'-thread_queue_size','512','-map','0:v','-map','1:a')
+  } else {
+    $ffArgs += @('-map','0:v')
+  }
+  $ffArgs += @('-vf','scale=trunc(iw/2)*2:trunc(ih/2)*2',
+              '-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p')
+  if ($RecordAudio -and $MicDevice) { $ffArgs += @('-c:a','aac','-b:a','128k') }
+  $ffArgs += @('-movflags','+faststart',
               '-use_wallclock_as_timestamps','1','-vsync','cfr','-rtbufsize','512M',
               '-force_key_frames',("expr:gte(t,n_forced*{0})" -f $SegmentSec),
               '-f','segment','-segment_time',$SegmentSec,'-reset_timestamps','1','-strftime','1',
@@ -144,13 +174,15 @@ if (-not (Test-Path $ff)) {
   exit 1
 }
 
-# Startup check: confirm mic device is reachable (auto-detect already validated above,
-# but a second check guards against hot-unplug between detection and capture start).
-$micCheck = & $ff -list_devices true -f dshow -i dummy 2>&1
-if (-not ($micCheck | Where-Object { $_ -match [regex]::Escape($MicDeviceName) })) {
-  Write-Heartbeat 'error' $PID "Mic device not found: $MicDeviceName. Run: ffmpeg -list_devices true -f dshow -i dummy, then set config.micDevice"
-  Write-Error "Mic device not found: $MicDeviceName"
-  exit 1
+# Startup check for mic is NON-FATAL: if audio is enabled but the mic vanished
+# (e.g. RDP session ended so "リモート オーディオ" disappeared), degrade to
+# video-only instead of exiting. Recording screen + keylog must never stop over audio.
+if ($RecordAudio -and $MicDeviceName) {
+  $micCheck = & $ff -list_devices true -f dshow -i dummy 2>&1
+  if (-not ($micCheck | Where-Object { $_ -match [regex]::Escape($MicDeviceName) })) {
+    Write-Heartbeat 'starting' $PID "mic '$MicDeviceName' not present; recording video-only"
+    $RecordAudio = $false
+  }
 }
 
 Write-Heartbeat 'starting' $PID ''
