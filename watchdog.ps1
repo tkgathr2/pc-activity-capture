@@ -1,4 +1,4 @@
-# watchdog.ps1 - dead-man switch. Runs every few minutes (scheduled task).
+﻿# watchdog.ps1 - dead-man switch. Runs every few minutes (scheduled task).
 # If capture's heartbeat is missing or stale (=not running), alert the 上長 (manager).
 # Alerts only on state CHANGE (up->down / down->up) to avoid spam. ASCII-only.
 $ErrorActionPreference = 'Continue'
@@ -59,12 +59,20 @@ if ($state -eq 'DOWN') {
   $running = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -like '*run-capture-daemon*' })
   if ($running.Count -eq 0 -and (Test-Path $daemonScript)) {
-    # wscript.exe run-hidden.vbs 経由で起動 → コンソール窓チラつき完全排除
-    $vbs = 'C:\Users\takag\.claude\tools\run-hidden.vbs'
-    $sh = New-Object -ComObject WScript.Shell
-    $cmd = "wscript.exe `"$vbs`" powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$daemonScript`""
-    $sh.Run($cmd, 0, $false)
-    Send-Alert ("[AUTO-RESTART] Daemon was $reason; restarted by watchdog on $env:COMPUTERNAME/$env:USERNAME.")
+    # Start-Process -WindowStyle Hidden で起動（install.ps1 と同一方式）。
+    # 旧実装は takag 個人PCの run-hidden.vbs 絶対パスに依存し、配布先PCでは
+    # 存在せず自動復旧が無言で失敗していた。成功を確認してからアラートを出す。
+    $started = $null
+    try {
+      $started = Start-Process powershell -PassThru -ErrorAction Stop -ArgumentList @(
+        '-NoProfile', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
+        '-File', "`"$daemonScript`"")
+    } catch { $started = $null }
+    if ($started) {
+      Send-Alert ("[AUTO-RESTART] Daemon was $reason; restarted by watchdog on $env:COMPUTERNAME/$env:USERNAME.")
+    } else {
+      Send-Alert ("[RESTART-FAILED] Daemon was $reason but restart FAILED on $env:COMPUTERNAME/$env:USERNAME.")
+    }
   }
 }
 

@@ -1,0 +1,2 @@
+# batはcmd.exe実行のためCRLF固定（LFだと複数行ifブロックを誤パース）
+*.bat text eol=crlf

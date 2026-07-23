@@ -10,7 +10,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Web -ErrorAction SilentlyContinue
 
 $root       = Split-Path -Parent $MyInvocation.MyCommand.Path
-$cfg        = Get-Content (Join-Path $root 'config.json') -Raw | ConvertFrom-Json
+$cfg        = Get-Content (Join-Path $root 'config.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 $captRoot   = [Environment]::ExpandEnvironmentVariables($cfg.captureRoot)
 $reportDir  = Join-Path $root 'state\reports'
 New-Item -ItemType Directory -Force $reportDir | Out-Null
@@ -179,15 +179,33 @@ $mierukaTextComment  = $null
 $mierukaImageComment = $null
 $mierukaFrameB64     = $null
 
-# テキスト分析（キーログがある週のみ）
-if ($totalKeys -gt 0) {
+# claude CLI を絶対パス解決。-NoProfile/スケジュールタスク実行下では machine PATH
+# (npm global 等) を継承せず裸の 'claude' が CommandNotFound になり、AI分析が
+# 無音でスキップされる。ffmpeg と同じ方針で実体を探す。見つからなければ $null。
+function Resolve-Claude {
+  $c = Get-Command claude -ErrorAction SilentlyContinue
+  if ($c -and $c.Source) { return $c.Source }
+  $cands = @(
+    "$env:APPDATA\npm\claude.cmd", "$env:APPDATA\npm\claude.ps1", "$env:APPDATA\npm\claude",
+    "$env:ProgramFiles\nodejs\claude.cmd",
+    "$env:LOCALAPPDATA\Programs\claude\claude.exe",
+    "$env:USERPROFILE\.local\bin\claude.exe", "$env:USERPROFILE\.claude\local\claude.exe"
+  )
+  foreach ($p in $cands) { if ($p -and (Test-Path $p)) { return $p } }
+  return $null
+}
+$claudeBin = if ($cfg.claudePath -and (Test-Path $cfg.claudePath)) { $cfg.claudePath } else { Resolve-Claude }
+if (-not $claudeBin) { Write-Host "[mieruka] claude CLI not found; AI分析スキップ" }
+
+# テキスト分析（キーログがある週のみ・claude が見つかった時のみ）
+if ($totalKeys -gt 0 -and $claudeBin) {
   $catLines = ($catMap.GetEnumerator() | Sort-Object Value -Descending |
     ForEach-Object { '{0} {1}%' -f $_.Key, [math]::Round($_.Value/$totalKeysSafe*100,1) }) -join ' / '
   $appLines = ($topApps | Select-Object -First 6 |
     ForEach-Object { '{0}({1})' -f $_.Key.Substring(0,[math]::Min(20,$_.Key.Length)), $_.Value }) -join ' / '
   $tp = "あなたはPC活動分析AI「ミエルカくん」です。以下の1週間のデータを分析し、洞察とアドバイスを3〜4文の日本語（です・ます調、箇条書き禁止）で生成してください。`n週: $weekLabel / 稼働$activeDays/7日 / ${totalHr}h録画 / ${totalKeys}キー`nカテゴリ: $catLines`n上位アプリ: $appLines"
   try {
-    $r = & claude -p $tp 2>&1
+    $r = & $claudeBin -p $tp 2>$null
     if ($LASTEXITCODE -eq 0) {
       $mierukaTextComment = ($r | Where-Object { $_ -and $_ -notmatch '^\s*$' }) -join ' '
     }
@@ -213,10 +231,12 @@ if ($weekMp4s.Count -gt 0) {
       $mierukaFrameUrl = "/reports/$weekId-thumb.jpg"
       # stream-json形式でビジョン分析
       $b64 = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($thumbFile))
-      $vjson = '{"type":"user","message":{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"' + $b64 + '"}},{"type":"text","text":"このPCのスクリーンショットで何の作業をしているか、1〜2文の日本語で教えてください。"}]}}'
-      $r2 = ($vjson | & claude -p --input-format stream-json 2>&1)
-      if ($LASTEXITCODE -eq 0) {
-        $mierukaImageComment = ($r2 | Where-Object { $_ -and $_ -notmatch '^\s*$' }) -join ' '
+      if ($claudeBin) {
+        $vjson = '{"type":"user","message":{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"' + $b64 + '"}},{"type":"text","text":"このPCのスクリーンショットで何の作業をしているか、1〜2文の日本語で教えてください。"}]}}'
+        $r2 = ($vjson | & $claudeBin -p --input-format stream-json 2>$null)
+        if ($LASTEXITCODE -eq 0) {
+          $mierukaImageComment = ($r2 | Where-Object { $_ -and $_ -notmatch '^\s*$' }) -join ' '
+        }
       }
     }
   } catch {}

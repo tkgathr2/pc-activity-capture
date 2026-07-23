@@ -15,7 +15,7 @@ $dashDir     = Join-Path $root 'dashboard'
 $port        = 8765
 $prefix      = "http://127.0.0.1:$port/"
 
-$cfg         = Get-Content (Join-Path $root 'config.json') -Raw | ConvertFrom-Json
+$cfg         = Get-Content (Join-Path $root 'config.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 $captureRoot = [Environment]::ExpandEnvironmentVariables($cfg.captureRoot)
 
 $listener = [System.Net.HttpListener]::new()
