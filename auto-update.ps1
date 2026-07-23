@@ -47,10 +47,18 @@ try {
     if ($running.Count -gt 0) { Start-Sleep -Seconds 3 }
 
     # Restart daemon with updated code
+    # run-hidden.vbs があれば WScript.Shell 経由で起動（コンソール窓チラつき排除）。
     $daemonScript = Join-Path $root 'run-capture-daemon.ps1'
-    Start-Process powershell -ArgumentList @(
-      '-NoProfile', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
-      '-File', "`"$daemonScript`"") -ErrorAction SilentlyContinue
+    $vbs = 'C:\Users\takag\.claude\tools\run-hidden.vbs'
+    if (Test-Path $vbs) {
+      $sh = New-Object -ComObject WScript.Shell
+      $cmd = "wscript.exe `"$vbs`" powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$daemonScript`""
+      $sh.Run($cmd, 0, $false)
+    } else {
+      Start-Process powershell -ArgumentList @(
+        '-NoProfile', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
+        '-File', "`"$daemonScript`"") -ErrorAction SilentlyContinue
+    }
     Write-Log "Daemon restarted with new version"
   } else {
     Write-Log "No update (HEAD: $($after.Substring(0,[Math]::Min(7,$after.Length))))"
