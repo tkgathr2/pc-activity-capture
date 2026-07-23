@@ -48,6 +48,13 @@ if (Test-Path (Join-Path $installDir '.git')) {
   Log "Cloned."
 }
 
+# --- Seed config.json from template (git-ignored; keeps hourly auto-update conflict-free) ---
+$cfgPath = Join-Path $installDir 'config.json'
+if (-not (Test-Path $cfgPath)) {
+  $tmpl = Join-Path $installDir 'config.template.json'
+  if (Test-Path $tmpl) { Copy-Item $tmpl $cfgPath; Log "config.json created from template." }
+}
+
 $daemonScript = Join-Path $installDir 'run-capture-daemon.ps1'
 $watchdogScript = Join-Path $installDir 'watchdog.ps1'
 $updateScript = Join-Path $installDir 'auto-update.ps1'

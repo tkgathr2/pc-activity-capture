@@ -10,7 +10,14 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Web -ErrorAction SilentlyContinue
 
 $root       = Split-Path -Parent $MyInvocation.MyCommand.Path
-$cfg        = Get-Content (Join-Path $root 'config.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+# Bootstrap: seed config.json from the tracked template on first run (git-ignored
+# on distributed PCs) so a hand-edited config never conflicts with hourly git pull.
+$cfgPath    = Join-Path $root 'config.json'
+if (-not (Test-Path $cfgPath)) {
+  $tmpl = Join-Path $root 'config.template.json'
+  if (Test-Path $tmpl) { Copy-Item $tmpl $cfgPath }
+}
+$cfg        = Get-Content $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $captRoot   = [Environment]::ExpandEnvironmentVariables($cfg.captureRoot)
 $reportDir  = Join-Path $root 'state\reports'
 New-Item -ItemType Directory -Force $reportDir | Out-Null

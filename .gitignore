@@ -6,6 +6,7 @@ pc-capture-data/
 *.jsonl
 verify-out.log
 # config.json may contain slackWebhook secret — use config.template.json as safe baseline
+config.json
 config.local.json
 # IDE / tool metadata
 .claude/

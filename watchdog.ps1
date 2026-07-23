@@ -10,7 +10,14 @@ New-Item -ItemType Directory -Force $stateDir | Out-Null
 $hbFile   = Join-Path $stateDir 'heartbeat.json'
 $wsFile   = Join-Path $stateDir 'watchdog-state.json'
 $alogFile = Join-Path $stateDir 'alerts.log'
-$cfg      = Get-Content (Join-Path $root 'config.json') -Raw | ConvertFrom-Json
+# Bootstrap: seed config.json from the tracked template on first run (git-ignored
+# on distributed PCs) so a hand-edited config never conflicts with hourly git pull.
+$cfgPath  = Join-Path $root 'config.json'
+if (-not (Test-Path $cfgPath)) {
+  $tmpl = Join-Path $root 'config.template.json'
+  if (Test-Path $tmpl) { Copy-Item $tmpl $cfgPath }
+}
+$cfg      = Get-Content $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
 # Guard against missing/zero staleSeconds (would make every heartbeat look stale)
 $staleSec = if ($cfg.staleSeconds -and [int]$cfg.staleSeconds -gt 0) { [int]$cfg.staleSeconds } else { 300 }
 
@@ -59,15 +66,23 @@ if ($state -eq 'DOWN') {
   $running = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -like '*run-capture-daemon*' })
   if ($running.Count -eq 0 -and (Test-Path $daemonScript)) {
-    # Start-Process -WindowStyle Hidden で起動（install.ps1 と同一方式）。
-    # 旧実装は takag 個人PCの run-hidden.vbs 絶対パスに依存し、配布先PCでは
-    # 存在せず自動復旧が無言で失敗していた。成功を確認してからアラートを出す。
-    $started = $null
+    # run-hidden.vbs があれば WScript.Shell 経由で起動（コンソール窓チラつき排除）。
+    # なければ Start-Process -WindowStyle Hidden にフォールバック（配布先PC互換）。
+    $vbs = 'C:\Users\takag\.claude\tools\run-hidden.vbs'
+    $started = $false
     try {
-      $started = Start-Process powershell -PassThru -ErrorAction Stop -ArgumentList @(
-        '-NoProfile', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
-        '-File', "`"$daemonScript`"")
-    } catch { $started = $null }
+      if (Test-Path $vbs) {
+        $sh = New-Object -ComObject WScript.Shell
+        $cmd = "wscript.exe `"$vbs`" powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$daemonScript`""
+        $sh.Run($cmd, 0, $false)
+        $started = $true
+      } else {
+        $proc = Start-Process powershell -PassThru -ErrorAction Stop -ArgumentList @(
+          '-NoProfile', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
+          '-File', "`"$daemonScript`"")
+        $started = ($null -ne $proc)
+      }
+    } catch { $started = $false }
     if ($started) {
       Send-Alert ("[AUTO-RESTART] Daemon was $reason; restarted by watchdog on $env:COMPUTERNAME/$env:USERNAME.")
     } else {

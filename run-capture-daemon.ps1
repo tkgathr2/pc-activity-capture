@@ -14,7 +14,14 @@ $root      = Split-Path -Parent $MyInvocation.MyCommand.Path
 $stateDir  = Join-Path $root 'state'
 New-Item -ItemType Directory -Force $stateDir | Out-Null
 $hbFile    = Join-Path $stateDir 'heartbeat.json'
-$cfg       = Get-Content (Join-Path $root 'config.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+# Bootstrap: config.json is git-ignored on distributed PCs; seed it from the tracked
+# template on first run so a hand-edited config never conflicts with hourly git pull.
+$cfgPath = Join-Path $root 'config.json'
+if (-not (Test-Path $cfgPath)) {
+  $tmpl = Join-Path $root 'config.template.json'
+  if (Test-Path $tmpl) { Copy-Item $tmpl $cfgPath }
+}
+$cfg       = Get-Content $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $outRoot   = [Environment]::ExpandEnvironmentVariables($cfg.captureRoot)
 $minFreeGB = if ($cfg.minFreeGB) { [double]$cfg.minFreeGB } else { 10 }
 
