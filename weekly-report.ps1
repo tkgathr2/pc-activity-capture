@@ -15,6 +15,25 @@ $captRoot   = [Environment]::ExpandEnvironmentVariables($cfg.captureRoot)
 $reportDir  = Join-Path $root 'state\reports'
 New-Item -ItemType Directory -Force $reportDir | Out-Null
 
+# ISO-8601 week number + the YEAR THE WEEK BELONGS TO (not the calendar year of
+# its Monday). Needed for the year-crossing case: e.g. Mon 2025-12-29 is ISO
+# 2026-W01, so a plain .ToString('yyyy') on the Monday would mislabel it "2025".
+# ISOWeek exists in .NET Core/5+ (pwsh) but NOT in .NET Framework (Windows
+# PowerShell 5.1), so fall back to the Thursday rule: the week's Thursday always
+# lies in the correct ISO year.
+function Get-IsoWeekYear([datetime]$monday) {
+  try {
+    return @([System.Globalization.ISOWeek]::GetYear($monday),
+             [System.Globalization.ISOWeek]::GetWeekOfYear($monday))
+  } catch {
+    $thu  = $monday.AddDays(3)                       # Mon -> Thu of the same ISO week
+    # Assign to a var first: inlining "[math]::Floor(..) + 1" inside @(...) makes
+    # PowerShell drop the "+ 1", yielding an off-by-one week (W00/W52).
+    $week = ([int][math]::Floor(($thu.DayOfYear - 1) / 7)) + 1
+    return @($thu.Year, $week)
+  }
+}
+
 # --- week boundaries (Monday=start, Sunday=end) ---
 $today    = [datetime]::Today
 $dow      = [int]$today.DayOfWeek          # 0=Sun .. 6=Sat
@@ -22,11 +41,40 @@ $mondayOffset = if ($dow -eq 0) { -6 } else { 1 - $dow }
 $thisMonday   = $today.AddDays($mondayOffset)
 $weekStart    = $thisMonday.AddDays($WeekOffset * 7)
 $weekEnd      = $weekStart.AddDays(6)
-$weekLabel    = "W{0:D2} {1}" -f (Get-Date $weekStart -UFormat '%V'), $weekStart.ToString('yyyy')
+$isoYW        = Get-IsoWeekYear $weekStart
+$weekLabel    = "W{0:D2} {1}" -f [int]$isoYW[1], [int]$isoYW[0]   # {0:D2} needs Int32, not the Double from [math]::Floor
 $weekId       = $weekStart.ToString('yyyy-MM-dd')
 $reportFile   = Join-Path $reportDir "$weekId.html"
 
 Write-Host "[weekly-report] $weekLabel  ($($weekStart.ToString('MM/dd')) - $($weekEnd.ToString('MM/dd')))"
+
+# --- ffprobe resolver (assumed to sit next to ffmpeg) + real-duration probe -------
+# Used to measure the ACTUAL length of each mp4 segment instead of assuming every
+# segment is a full 30 min (see day loop below).
+function Resolve-Ffprobe($cfg) {
+  if ($cfg.ffprobePath -and (Test-Path $cfg.ffprobePath)) { return $cfg.ffprobePath }
+  if ($cfg.ffmpegPath  -and (Test-Path $cfg.ffmpegPath)) {
+    $sib = Join-Path (Split-Path -Parent $cfg.ffmpegPath) 'ffprobe.exe'
+    if (Test-Path $sib) { return $sib }
+  }
+  $c = Get-Command ffprobe -ErrorAction SilentlyContinue
+  if ($c -and $c.Source) { return $c.Source }
+  return $null
+}
+$ffprobeBin = Resolve-Ffprobe $cfg
+if (-not $ffprobeBin) { Write-Host "[weekly-report] ffprobe not found; 録画時間はサイズ推定にフォールバック" }
+
+# Return the real duration (seconds) of one mp4, or 0 if ffprobe is missing/fails.
+function Get-Mp4DurationSec($ffprobe, [string]$path) {
+  if (-not $ffprobe) { return 0.0 }
+  try {
+    $o = & $ffprobe -v error -show_entries format=duration -of csv=p=0 $path 2>$null
+    $d = 0.0
+    # ffprobe emits invariant (period) decimals; parse invariantly so a comma-decimal locale can't misread it.
+    if ([double]::TryParse(($o | Select-Object -First 1), [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$d) -and $d -gt 0) { return $d }
+  } catch {}
+  return 0.0
+}
 
 # --- collect per-day stats ---
 $JaDay = @('日','月','火','水','木','金','土')
@@ -43,10 +91,26 @@ for ($i = 0; $i -le 6; $i++) {
 
   if (Test-Path $dayDir) {
     $mp4s = @(Get-ChildItem $dayDir -Filter '*.mp4' -ErrorAction SilentlyContinue | Where-Object Length -gt 10000)
-    # estimate duration: each segment file is up to 1800s; use count * segment length
-    # more precise: sum of (file size / avg bitrate). Use 1800s segments as floor.
-    $recMinutes = [math]::Round($mp4s.Count * 30, 0)   # 30 min per segment
     $sizeMB     = [math]::Round(($mp4s | Measure-Object Length -Sum).Sum / 1MB, 0)
+
+    # Total recording time = SUM OF EACH SEGMENT'S REAL DURATION (ffprobe), NOT
+    # count*30. Segments that ended early (last file of a session / manual stop)
+    # are shorter than 30 min, so the old count*30 over-counted. Probing every
+    # file is acceptable here (weekly batch, runs ~1x/週); if a week ever holds
+    # thousands of segments this loop is the slow part.
+    # Fallbacks when ffprobe is unavailable: 1) size relative to the day's largest
+    # (full) segment * 1800s (= avg-bitrate 推定); 2) last resort 1 file = 30 min.
+    $totalSec = 0.0
+    $refBytes = ($mp4s | Measure-Object Length -Maximum).Maximum   # full 30-min segment proxy
+    foreach ($f in $mp4s) {
+      $sec = Get-Mp4DurationSec $ffprobeBin $f.FullName
+      if ($sec -le 0) {
+        if ($refBytes -gt 0) { $sec = [math]::Min(1800, $f.Length / $refBytes * 1800) }  # 推定
+        else                 { $sec = 1800 }                                             # 推定(最終)
+      }
+      $totalSec += $sec
+    }
+    $recMinutes = [math]::Round($totalSec / 60, 0)
 
     # keylog: count keystrokes per window
     $klogs = @(Get-ChildItem $dayDir -Filter 'keylog_*.jsonl' -ErrorAction SilentlyContinue | Where-Object Length -gt 0)

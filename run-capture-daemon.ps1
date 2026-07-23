@@ -22,7 +22,17 @@ $minFreeGB = if ($cfg.minFreeGB) { [double]$cfg.minFreeGB } else { 10 }
 # data to a person. Created once; edit staffLabel later to a human name if wanted.
 # config.staffLabel (if set) wins; otherwise default to COMPUTERNAME.
 $machineFile = Join-Path $stateDir 'machine.json'
-if (-not (Test-Path $machineFile)) {
+# Regenerate every daemon start (i.e. every logon) if the stamp is MISSING or
+# CORRUPT/EMPTY. The old '-not Test-Path' check only covered a missing file, so a
+# truncated or unparseable machine.json would never self-heal.
+$machineValid = $false
+if (Test-Path $machineFile) {
+  try {
+    $mjExisting = Get-Content $machineFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($mjExisting -and $mjExisting.computerName) { $machineValid = $true }
+  } catch { $machineValid = $false }
+}
+if (-not $machineValid) {
   $label = if ($cfg.staffLabel) { "$($cfg.staffLabel)" } else { $env:COMPUTERNAME }
   $mj = [ordered]@{
     computerName = $env:COMPUTERNAME
