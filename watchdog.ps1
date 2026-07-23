@@ -59,9 +59,11 @@ if ($state -eq 'DOWN') {
   $running = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -like '*run-capture-daemon*' })
   if ($running.Count -eq 0 -and (Test-Path $daemonScript)) {
-    Start-Process powershell -ArgumentList @(
-      '-NoProfile', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
-      '-File', "`"$daemonScript`"") -ErrorAction SilentlyContinue
+    # wscript.exe run-hidden.vbs 経由で起動 → コンソール窓チラつき完全排除
+    $vbs = 'C:\Users\takag\.claude\tools\run-hidden.vbs'
+    $sh = New-Object -ComObject WScript.Shell
+    $cmd = "wscript.exe `"$vbs`" powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$daemonScript`""
+    $sh.Run($cmd, 0, $false)
     Send-Alert ("[AUTO-RESTART] Daemon was $reason; restarted by watchdog on $env:COMPUTERNAME/$env:USERNAME.")
   }
 }

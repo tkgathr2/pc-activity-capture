@@ -7,6 +7,7 @@ param([int]$WeekOffset = -1)
 
 $ErrorActionPreference = 'Continue'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+Add-Type -AssemblyName System.Web -ErrorAction SilentlyContinue
 
 $root       = Split-Path -Parent $MyInvocation.MyCommand.Path
 $cfg        = Get-Content (Join-Path $root 'config.json') -Raw | ConvertFrom-Json
@@ -173,6 +174,73 @@ foreach ($a in $topApps) {
   $rank++
 }
 
+# ─── ミエルカくん AI分析 ──────────────────────────────────────────────
+$mierukaTextComment  = $null
+$mierukaImageComment = $null
+$mierukaFrameB64     = $null
+
+# テキスト分析（キーログがある週のみ）
+if ($totalKeys -gt 0) {
+  $catLines = ($catMap.GetEnumerator() | Sort-Object Value -Descending |
+    ForEach-Object { '{0} {1}%' -f $_.Key, [math]::Round($_.Value/$totalKeysSafe*100,1) }) -join ' / '
+  $appLines = ($topApps | Select-Object -First 6 |
+    ForEach-Object { '{0}({1})' -f $_.Key.Substring(0,[math]::Min(20,$_.Key.Length)), $_.Value }) -join ' / '
+  $tp = "あなたはPC活動分析AI「ミエルカくん」です。以下の1週間のデータを分析し、洞察とアドバイスを3〜4文の日本語（です・ます調、箇条書き禁止）で生成してください。`n週: $weekLabel / 稼働$activeDays/7日 / ${totalHr}h録画 / ${totalKeys}キー`nカテゴリ: $catLines`n上位アプリ: $appLines"
+  try {
+    $r = & claude -p $tp 2>&1
+    if ($LASTEXITCODE -eq 0) {
+      $mierukaTextComment = ($r | Where-Object { $_ -and $_ -notmatch '^\s*$' }) -join ' '
+    }
+  } catch {}
+  Write-Host "[mieruka] text: $(if($mierukaTextComment){'OK'}else{'skip'})"
+}
+
+# 画像分析（今週のmp4から代表フレームを抽出）
+$weekMp4s = @()
+foreach ($day in $days) {
+  $dd = Join-Path $captRoot $day.date
+  if (Test-Path $dd) { $weekMp4s += @(Get-ChildItem $dd -Filter '*.mp4' -ErrorAction SilentlyContinue | Where-Object Length -gt 1MB) }
+}
+$mierukaFrameUrl = $null
+if ($weekMp4s.Count -gt 0) {
+  $sampleMp4 = ($weekMp4s | Sort-Object LastWriteTime)[[math]::Floor($weekMp4s.Count/2)]
+  $thumbFile = Join-Path $reportDir "$weekId-thumb.jpg"
+  try {
+    $ff = if ($cfg.ffmpegPath -and (Test-Path $cfg.ffmpegPath)) { $cfg.ffmpegPath } else { 'ffmpeg' }
+    # 480x270 のサムネイルを抽出（軽量）
+    & $ff -y -i $sampleMp4.FullName -ss 30 -vframes 1 -vf scale=480:-1 -q:v 6 $thumbFile 2>&1 | Out-Null
+    if (Test-Path $thumbFile) {
+      $mierukaFrameUrl = "/reports/$weekId-thumb.jpg"
+      # stream-json形式でビジョン分析
+      $b64 = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($thumbFile))
+      $vjson = '{"type":"user","message":{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"' + $b64 + '"}},{"type":"text","text":"このPCのスクリーンショットで何の作業をしているか、1〜2文の日本語で教えてください。"}]}}'
+      $r2 = ($vjson | & claude -p --input-format stream-json 2>&1)
+      if ($LASTEXITCODE -eq 0) {
+        $mierukaImageComment = ($r2 | Where-Object { $_ -and $_ -notmatch '^\s*$' }) -join ' '
+      }
+    }
+  } catch {}
+  Write-Host "[mieruka] image: $(if($mierukaImageComment){'OK'}elseif($mierukaFrameUrl){'thumb-only'}else{'skip'})"
+}
+
+$mierukaHtml = ''
+if ($mierukaTextComment -or $mierukaImageComment -or $mierukaFrameUrl) {
+  $imgTag  = if ($mierukaFrameUrl)     { "<img src='$mierukaFrameUrl' style='max-width:100%;border-radius:6px;margin-bottom:10px;display:block'>" } else { '' }
+  $imgNote = if ($mierukaImageComment) { "<p class='mi-note'><strong>画面から：</strong> $([System.Web.HttpUtility]::HtmlEncode($mierukaImageComment))</p>" } else { '' }
+  $txtNote = if ($mierukaTextComment)  { "<p class='mi-txt'>$([System.Web.HttpUtility]::HtmlEncode($mierukaTextComment))</p>" } else { '' }
+  $mierukaHtml = @"
+<div class="section mi-section">
+  <h2>ミエルカくん分析</h2>
+  <div class="mi-body">
+    $imgTag
+    $imgNote
+    $txtNote
+  </div>
+</div>
+"@
+}
+# ─── ミエルカくん 終わり ────────────────────────────────────────────
+
 $generatedAt = (Get-Date).ToString('yyyy/MM/dd HH:mm')
 
 $html = @"
@@ -208,6 +276,11 @@ $html = @"
   #heatWrap{overflow-x:auto}
   .heat-grid{display:grid;gap:2px}
   .footer{margin-top:24px;font-size:.75rem;color:var(--muted)}
+  .mi-section{border-left:3px solid var(--accent)}
+  .mi-section h2::before{content:'👁 '}
+  .mi-body{display:flex;flex-direction:column;gap:10px}
+  .mi-note{font-size:.85rem;color:var(--muted);border-left:2px solid var(--bar);padding-left:10px}
+  .mi-txt{line-height:1.7;font-size:.9rem}
 </style>
 </head>
 <body>
@@ -387,15 +460,13 @@ $appRows
 })();
 </script>
 
+$mierukaHtml
+
 <p class="footer">Revolution PC Activity Capture &nbsp;·&nbsp; $([System.Environment]::MachineName) / $([System.Environment]::UserName)</p>
 </body>
 </html>
 "@
 
-# Need System.Web for HtmlEncode
-Add-Type -AssemblyName System.Web -ErrorAction SilentlyContinue
-
-# Re-render appRows with encoding (already done above but re-run if assembly was missing)
 [System.IO.File]::WriteAllText($reportFile, $html, [System.Text.UTF8Encoding]::new($false))
 Write-Host "[weekly-report] Saved: $reportFile"
 Write-Host "[weekly-report] Summary: ${totalHr}h recorded, $activeDays active days, $($topApps.Count) apps"

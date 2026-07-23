@@ -2,7 +2,7 @@
   "captureRoot": "%USERPROFILE%\\pc-capture-data",
   "staleSeconds": 300,
   "minFreeGB": 10,
-  "micDevice": "マイク (EMEET SmartCam C965)",
+  "micDevice": "",
   "notify": {
     "method": "log",
     "johcho": "Takagi (president) / wire slackWebhook to enable Slack alerts",

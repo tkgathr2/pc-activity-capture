@@ -1,4 +1,4 @@
-# run-capture-daemon.ps1 - continuous capture for "auto-start on logon" mode.
+﻿# run-capture-daemon.ps1 - continuous capture for "auto-start on logon" mode.
 # Uses ONE long-lived ffmpeg with the segment muxer so consecutive mp4 files are
 # GAPLESS (the encoder never stops between files). Writes a fresh heartbeat every
 # 30s so the watchdog can tell capture is alive. Never hard-crashes.
@@ -123,12 +123,13 @@ function Start-Capture {
   # keyframe exactly at each boundary so segments are exactly SegmentSec long and
   # split with no lost frames. -strftime names files by wall clock = t0_video.
   $outPat = Join-Path $dayDir '%Y-%m-%d_%H%M%S.mp4'
-  $ffArgs = @('-y','-f','gdigrab','-framerate',$Fps,'-i','desktop','-f','dshow','-i',$MicDevice,
+  $ffArgs = @('-y','-f','gdigrab','-framerate',$Fps,'-i','desktop','-video_size','1920x1080','-thread_queue_size','512','-f','dshow','-i',$MicDevice,'-thread_queue_size','512',
               '-map','0:v','-map','1:a',
+              '-vf','scale=trunc(iw/2)*2:trunc(ih/2)*2',
               '-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p',
               '-c:a','aac','-b:a','128k',
               '-movflags','+faststart',
-              '-use_wallclock_as_timestamps','1','-vsync','cfr','-rtbufsize','256M',
+              '-use_wallclock_as_timestamps','1','-vsync','cfr','-rtbufsize','512M',
               '-force_key_frames',("expr:gte(t,n_forced*{0})" -f $SegmentSec),
               '-f','segment','-segment_time',$SegmentSec,'-reset_timestamps','1','-strftime','1',
               $outPat)
